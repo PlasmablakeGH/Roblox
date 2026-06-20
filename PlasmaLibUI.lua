@@ -222,7 +222,7 @@ function Library:CreateWindow(opts)
         Z      = 2,
         Parent = sg,
     })
-    Decorate(win, UDim.new(0,6), Theme.Border, 1)
+    Decorate(win, UDim.new(0,0), Theme.Border, 1)
     AddScanlines(win)
 
     -- Top accent stripe
