@@ -207,7 +207,7 @@ function Library:CreateWindow(opts)
     local sg = Instance.new("ScreenGui")
     sg.Name             = "PlasmaLibUI_" .. TITLE:gsub("%s","")
     sg.ResetOnSpawn     = false
-    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Global
     sg.IgnoreGuiInset   = true
     sg.DisplayOrder     = 999
     sg.Parent           = GuiParent()
