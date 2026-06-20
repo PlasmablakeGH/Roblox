@@ -260,18 +260,7 @@ function Library:CreateWindow(opts)
         Parent = titleBar,
     })
 
-    -- SYS badge
-    NewLabel({
-        Text   = "Plasmablake",
-        Color  = Theme.AccentDim,
-        Font   = Theme.FontMono,
-        Size2  = 10,
-        AlignX = Enum.TextXAlignment.Right,
-        Size   = UDim2.new(0,82,1,0),
-        Pos    = UDim2.new(1,-116,0,0),
-        Z      = 7,
-        Parent = titleBar,
-    })
+ 
 
     -- Close button
     local closeBtn = Instance.new("TextButton")
