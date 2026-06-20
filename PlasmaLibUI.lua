@@ -107,7 +107,7 @@ local function NewLabel(p)
     l.Size         = p.Size     or UDim2.new(1,0,1,0)
     l.Position     = p.Pos      or UDim2.new(0,0,0,0)
     l.ZIndex       = p.Z        or 5
-    l.RichText     = p.Rich     or false
+    l.RichText     = p.Rich     or falseSYS
     l.Parent       = p.Parent
     return l
 end
@@ -244,7 +244,7 @@ function Library:CreateWindow(opts)
     iconImg.Size      = UDim2.new(0,22,0,22)
     iconImg.Position  = UDim2.new(0,8,0.5,-11)
     iconImg.Image     = ICON
-    iconImg.ImageColor3 = Theme.Accent
+    iconImg.ImageColor3 = Color3.fromRGB(0, 255, 100)
     iconImg.ZIndex    = 7
     iconImg.Parent    = titleBar
 
@@ -262,7 +262,7 @@ function Library:CreateWindow(opts)
 
     -- SYS badge
     NewLabel({
-        Text   = "SYS::ONLINE",
+        Text   = "Plasmablake",
         Color  = Theme.AccentDim,
         Font   = Theme.FontMono,
         Size2  = 10,
@@ -278,7 +278,7 @@ function Library:CreateWindow(opts)
     closeBtn.BackgroundColor3 = Color3.fromRGB(28,8,8)
     closeBtn.Size       = UDim2.new(0,28,0,20)
     closeBtn.Position   = UDim2.new(1,-34,0.5,-10)
-    closeBtn.Text       = "✕"
+    closeBtn.Text       = "X"
     closeBtn.Font       = Theme.FontBold
     closeBtn.TextSize   = 13
     closeBtn.TextColor3 = Theme.Danger
@@ -313,6 +313,7 @@ function Library:CreateWindow(opts)
     -- Horizontal list layout for tab buttons
     local tabBarList = Instance.new("UIListLayout")
     tabBarList.FillDirection = Enum.FillDirection.Horizontal
+    tabBarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
     tabBarList.SortOrder     = Enum.SortOrder.LayoutOrder
     tabBarList.Padding       = UDim.new(0, 2)
     tabBarList.Parent        = tabBar
@@ -322,14 +323,7 @@ function Library:CreateWindow(opts)
     tabBarPad.PaddingLeft = UDim.new(0, 4)
     tabBarPad.Parent      = tabBar
 
-    -- Thin divider line under the tab bar
-    NewFrame({
-        Color  = Theme.BorderDim,
-        Size   = UDim2.new(1,0,0,1),
-        Pos    = UDim2.new(0,0,1,-1),
-        Z      = 6,
-        Parent = tabBar,
-    })
+ 
 
     -- ── Content area ─────────────────────────────────────────────────
     -- Starts at y=71  (titleBar 38 + accent 2 + tabBar 30 + divider 1)
@@ -354,7 +348,7 @@ function Library:CreateWindow(opts)
         Parent = win,
     })
     NewLabel({
-        Text   = "◈ PLASMALIBUI  //  SECURE CHANNEL  //  ENCRYPTED",
+        Text   = "◈ ENCRYPTED // ENCRYPTED // ENCRYPTED",
         Color  = Theme.BorderDim,
         Font   = Theme.FontMono,
         Size2  = 10,
