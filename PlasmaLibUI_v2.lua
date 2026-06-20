@@ -14,49 +14,17 @@
 
     PlasmaLibUI  –  Modular Roblox Luau UI Library
     Theme        :  Hacker / Sci-Fi  (green-on-black)
-    Version      :  2.0.0  (COMPLETE OVERHAUL)
-
-    NEW FEATURES:
-    • Fixed Dropdown z-index & click handling (renders ON TOP of everything)
-    • CreateDropdownButton   – Dropdown + Execute Button combo
-    • CreateInputButton      – TextBox + Execute Button combo
-    • CreateKeybind          – Key capture element
-    • CreateColorPicker      – RGB color selector
-    • CreateMultiDropdown    – Multi-select dropdown
-    • CreateProgressBar      – Animated progress indicator
-    • Better animations, cleaner code, robust layering
+    Version      :  1.1.0  (tab switching fixed)
 
     USAGE:
         local Library = loadstring(game:HttpGet(RAW_URL, true))()
         local Window  = Library:CreateWindow({ Title = "My Tool", IconId = "rbxassetid://7072706620" })
         local Tab     = Window:CreateTab("Main")
-
         Tab:CreateButton({ Label = "Click", Callback = function() print("!") end })
-        Tab:CreateToggle({ Label = "ESP", Default = false, Callback = function(v) print(v) end })
+        Tab:CreateToggle({ Label = "ESP",   Default = false, Callback = function(v) print(v) end })
         Tab:CreateSlider({ Label = "Speed", Min = 16, Max = 250, Default = 16, Callback = function(v) print(v) end })
-
-        -- FIXED: Dropdown now properly layers on top
-        Tab:CreateDropdown({ Label = "Team", Options = {"Red","Blue","Green","Yellow"}, Callback = function(v) print(v) end })
-
-        -- NEW: Combined elements
-        Tab:CreateDropdownButton({ 
-            Label = "Teleport", 
-            Options = {"Spawn","Base","Shop"}, 
-            ButtonLabel = "GO",
-            Callback = function(selected) print("Teleport to", selected) end 
-        })
-
-        Tab:CreateInputButton({
-            Label = "Command",
-            Placeholder = "enter cmd...",
-            ButtonLabel = "RUN",
-            Callback = function(text, enterPressed) print("Command:", text) end
-        })
-
-        Tab:CreateKeybind({ Label = "Fly Key", Default = Enum.KeyCode.F, Callback = function(key) print("Bound to", key.Name) end })
-        Tab:CreateColorPicker({ Label = "ESP Color", Default = Color3.fromRGB(0,255,100), Callback = function(c) print(c) end })
-        Tab:CreateMultiDropdown({ Label = "Tags", Options = {"Admin","VIP","Mod","User"}, Callback = function(selectedTable) print(selectedTable) end })
-        Tab:CreateProgressBar({ Label = "Health", Value = 75 })
+        Tab:CreateDropdown({ Label = "Team", Options = {"Red","Blue"}, Callback = function(v) print(v) end })
+        Tab:CreateLabel("PlasmaLibUI v1.1")
 --]]
 
 ------------------------------------------------------------------------
@@ -65,8 +33,6 @@
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
-local RunService       = game:GetService("RunService")
-local HttpService      = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -77,7 +43,6 @@ local Theme = {
     Background   = Color3.fromRGB(8,   12,  8),
     Surface      = Color3.fromRGB(12,  20,  12),
     SurfaceAlt   = Color3.fromRGB(18,  30,  18),
-    SurfaceHover = Color3.fromRGB(25,  45,  25),
     Border       = Color3.fromRGB(0,   200, 80),
     BorderDim    = Color3.fromRGB(0,   80,  30),
     Accent       = Color3.fromRGB(0,   255, 100),
@@ -95,7 +60,6 @@ local Theme = {
     TabActive    = Color3.fromRGB(0,   200, 75),
     TabInactive  = Color3.fromRGB(0,   45,  18),
     TitleBar     = Color3.fromRGB(6,   16,  6),
-    DropdownOverlay = Color3.fromRGB(10, 20, 10),
 
     CornerRadius    = UDim.new(0, 4),
     BorderThickness = 1,
@@ -108,14 +72,12 @@ local Theme = {
 
     Tween     = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
     TweenSlow = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-    TweenFast = TweenInfo.new(0.10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 }
 
 ------------------------------------------------------------------------
 -- Internal helpers
 ------------------------------------------------------------------------
 local function tw(obj, props, info)
-    if not obj or not obj.Parent then return end
     TweenService:Create(obj, info or Theme.Tween, props):Play()
 end
 
@@ -145,7 +107,7 @@ local function NewLabel(p)
     l.Size         = p.Size     or UDim2.new(1,0,1,0)
     l.Position     = p.Pos      or UDim2.new(0,0,0,0)
     l.ZIndex       = p.Z        or 5
-    l.RichText     = p.Rich     or false
+    l.RichText     = p.Rich     or falseSYS
     l.Parent       = p.Parent
     return l
 end
@@ -226,57 +188,6 @@ local function MakeDraggable(handle, target)
 end
 
 ------------------------------------------------------------------------
--- GLOBAL DROPDOWN MANAGER (fixes z-index layering)
-------------------------------------------------------------------------
-local GlobalDropdowns = {}
-local DropdownScreenGui = nil
-
-local function GetDropdownContainer()
-    if DropdownScreenGui and DropdownScreenGui.Parent then return DropdownScreenGui end
-    DropdownScreenGui = Instance.new("ScreenGui")
-    DropdownScreenGui.Name = "PlasmaLibUI_DropdownLayer"
-    DropdownScreenGui.ResetOnSpawn = false
-    DropdownScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    DropdownScreenGui.DisplayOrder = 100000
-    DropdownScreenGui.IgnoreGuiInset = true
-    DropdownScreenGui.Parent = GuiParent()
-    return DropdownScreenGui
-end
-
-local function CloseAllDropdowns(exceptListFrame)
-    for _, entry in ipairs(GlobalDropdowns) do
-        if entry.listFrame ~= exceptListFrame and entry.isOpen then
-            entry.isOpen = false
-            entry.listFrame.Visible = false
-            if entry.button then
-                tw(entry.button, {BackgroundColor3 = Theme.Surface})
-            end
-        end
-    end
-end
-
-UserInputService.InputBegan:Connect(function(inp, gameProcessed)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-        local mousePos = UserInputService:GetMouseLocation()
-        local anyClickedInside = false
-        for _, entry in ipairs(GlobalDropdowns) do
-            if entry.isOpen and entry.listFrame.Visible then
-                local absPos = entry.listFrame.AbsolutePosition
-                local absSize = entry.listFrame.AbsoluteSize
-                if mousePos.X >= absPos.X and mousePos.X <= absPos.X + absSize.X
-                   and mousePos.Y >= absPos.Y and mousePos.Y <= absPos.Y + absSize.Y then
-                    anyClickedInside = true
-                    break
-                end
-            end
-        end
-        if not anyClickedInside then
-            CloseAllDropdowns(nil)
-        end
-    end
-end)
-
-------------------------------------------------------------------------
 -- Library
 ------------------------------------------------------------------------
 local Library = {}
@@ -292,18 +203,20 @@ function Library:CreateWindow(opts)
     local W      = opts.Width  or 500
     local H      = opts.Height or 380
 
+    -- ── ScreenGui ────────────────────────────────────────────────────
     local sg = Instance.new("ScreenGui")
     sg.Name             = "PlasmaLibUI_" .. TITLE:gsub("%s","")
     sg.ResetOnSpawn     = false
-    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Global
+    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
     sg.IgnoreGuiInset   = true
     sg.DisplayOrder     = 999
     sg.Parent           = GuiParent()
 
+    -- ── Window frame ─────────────────────────────────────────────────
     local win = NewFrame({
         Name   = "Window",
         Color  = Theme.Background,
-        Size   = UDim2.new(0, W, 0, 0),
+        Size   = UDim2.new(0, W, 0, 0),     -- starts at 0, animated open
         Pos    = UDim2.new(0.5,-W/2, 0.5,-H/2),
         Clip   = true,
         Z      = 2,
@@ -312,8 +225,10 @@ function Library:CreateWindow(opts)
     Decorate(win, UDim.new(0,6), Theme.Border, 1)
     AddScanlines(win)
 
+    -- Top accent stripe
     NewFrame({ Color=Theme.Accent, Size=UDim2.new(1,0,0,2), Z=6, Parent=win })
 
+    -- ── Title bar ────────────────────────────────────────────────────
     local titleBar = NewFrame({
         Name   = "TitleBar",
         Color  = Theme.TitleBar,
@@ -323,6 +238,7 @@ function Library:CreateWindow(opts)
         Parent = win,
     })
 
+    -- Icon
     local iconImg = Instance.new("ImageLabel")
     iconImg.BackgroundTransparency = 1
     iconImg.Size      = UDim2.new(0,22,0,22)
@@ -332,6 +248,7 @@ function Library:CreateWindow(opts)
     iconImg.ZIndex    = 7
     iconImg.Parent    = titleBar
 
+    -- Title text
     NewLabel({
         Text   = ("[ %s ]"):format(TITLE:upper()),
         Color  = Theme.Accent,
@@ -343,18 +260,9 @@ function Library:CreateWindow(opts)
         Parent = titleBar,
     })
 
-    NewLabel({
-        Text   = "Plasmablake",
-        Color  = Theme.AccentDim,
-        Font   = Theme.FontMono,
-        Size2  = 10,
-        AlignX = Enum.TextXAlignment.Right,
-        Size   = UDim2.new(0,82,1,0),
-        Pos    = UDim2.new(1,-116,0,0),
-        Z      = 7,
-        Parent = titleBar,
-    })
+ 
 
+    -- Close button
     local closeBtn = Instance.new("TextButton")
     closeBtn.BackgroundColor3 = Color3.fromRGB(28,8,8)
     closeBtn.Size       = UDim2.new(0,28,0,20)
@@ -381,6 +289,8 @@ function Library:CreateWindow(opts)
 
     MakeDraggable(titleBar, win)
 
+    -- ── Tab button bar ───────────────────────────────────────────────
+    -- Sits directly below the title bar (y = 40)
     local tabBar = NewFrame({
         Name   = "TabBar",
         Color  = Theme.TitleBar,
@@ -389,6 +299,7 @@ function Library:CreateWindow(opts)
         Z      = 5,
         Parent = win,
     })
+    -- Horizontal list layout for tab buttons
     local tabBarList = Instance.new("UIListLayout")
     tabBarList.FillDirection = Enum.FillDirection.Horizontal
     tabBarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -396,10 +307,15 @@ function Library:CreateWindow(opts)
     tabBarList.Padding       = UDim.new(0, 2)
     tabBarList.Parent        = tabBar
 
+    -- Left padding so buttons don't touch the edge
     local tabBarPad = Instance.new("UIPadding")
     tabBarPad.PaddingLeft = UDim.new(0, 4)
     tabBarPad.Parent      = tabBar
 
+ 
+
+    -- ── Content area ─────────────────────────────────────────────────
+    -- Starts at y=71  (titleBar 38 + accent 2 + tabBar 30 + divider 1)
     local CONTENT_TOP = 71
     local STATUSBAR_H = 18
     local contentArea = NewFrame({
@@ -411,6 +327,7 @@ function Library:CreateWindow(opts)
         Parent = win,
     })
 
+    -- ── Status bar ───────────────────────────────────────────────────
     local statusBar = NewFrame({
         Name   = "StatusBar",
         Color  = Theme.TitleBar,
@@ -429,20 +346,27 @@ function Library:CreateWindow(opts)
         Parent = statusBar,
     })
 
-    local tabs       = {}
-    local activeIdx  = 0
+    ------------------------------------------------------------------
+    -- Tab registry  (shared across all tabs in this window)
+    -- Each entry: { btn = TextButton, page = ScrollingFrame }
+    ------------------------------------------------------------------
+    local tabs       = {}   -- array, filled as CreateTab is called
+    local activeIdx  = 0    -- which tab is currently shown
 
+    -- This function always walks the live `tabs` array — no stale captures
     local function SetActiveTab(idx)
         if activeIdx == idx then return end
         activeIdx = idx
         for i, entry in ipairs(tabs) do
             if i == idx then
+                -- Active style
                 tw(entry.btn, {
                     BackgroundColor3 = Theme.TabActive,
                     TextColor3       = Theme.Background,
                 })
                 entry.page.Visible = true
             else
+                -- Inactive style
                 tw(entry.btn, {
                     BackgroundColor3 = Theme.TabInactive,
                     TextColor3       = Theme.TextSecondary,
@@ -452,19 +376,26 @@ function Library:CreateWindow(opts)
         end
     end
 
+    ------------------------------------------------------------------
+    -- Window public API
+    ------------------------------------------------------------------
     local Window = {}
 
     function Window:SetIcon(id)
         iconImg.Image = id
     end
 
+    ----------------------------------------------------------------
+    -- Window:CreateTab(name)
+    ----------------------------------------------------------------
     function Window:CreateTab(name)
         name = tostring(name or "Tab")
 
+        ---- Tab button ------------------------------------------------
         local btn = Instance.new("TextButton")
         btn.Name             = "TabBtn_" .. name
         btn.BackgroundColor3 = Theme.TabInactive
-        btn.Size             = UDim2.new(0, 86, 1, -6)
+        btn.Size             = UDim2.new(0, 86, 1, -6)       -- width fixed, height fills bar minus padding
         btn.Text             = name:upper()
         btn.Font             = Theme.FontMono
         btn.TextSize         = Theme.TextSizeSmall
@@ -476,6 +407,7 @@ function Library:CreateWindow(opts)
         btn.Parent           = tabBar
         Decorate(btn, UDim.new(0,3), false)
 
+        ---- Scrollable page -------------------------------------------
         local page = Instance.new("ScrollingFrame")
         page.Name                   = "Page_" .. name
         page.BackgroundTransparency = 1
@@ -487,7 +419,7 @@ function Library:CreateWindow(opts)
         page.CanvasSize             = UDim2.new(0,0,0,0)
         page.AutomaticCanvasSize    = Enum.AutomaticSize.Y
         page.ZIndex                 = 4
-        page.Visible                = false
+        page.Visible                = false          -- hidden until activated
         page.Parent                 = contentArea
 
         local listLayout = Instance.new("UIListLayout")
@@ -502,13 +434,16 @@ function Library:CreateWindow(opts)
         pagePad.PaddingBottom = UDim.new(0, 8)
         pagePad.Parent        = page
 
+        ---- Register the tab BEFORE connecting the button click -------
         local myIndex = #tabs + 1
         tabs[myIndex] = { btn = btn, page = page }
 
+        -- If this is the very first tab, activate it immediately
         if myIndex == 1 then
             SetActiveTab(1)
         end
 
+        ---- Button interactions ---------------------------------------
         btn.MouseButton1Click:Connect(function()
             SetActiveTab(myIndex)
         end)
@@ -523,19 +458,20 @@ function Library:CreateWindow(opts)
             end
         end)
 
+        ---- Element helpers (scoped to this tab's page) ---------------
         local elementOrder = 0
         local function NextOrder()
             elementOrder = elementOrder + 1
             return elementOrder
         end
 
-        local function ElemFrame(h, customParent)
+        local function ElemFrame(h)
             local ef = NewFrame({
                 Color  = Theme.SurfaceAlt,
                 Size   = UDim2.new(1,0,0, h or 38),
                 Z      = 5,
                 Name   = "Element",
-                Parent = customParent or page,
+                Parent = page,
             })
             ef.LayoutOrder = NextOrder()
             Decorate(ef, UDim.new(0,4), Theme.BorderDim, 1)
@@ -546,8 +482,12 @@ function Library:CreateWindow(opts)
             return ef
         end
 
+        ---- Tab object ------------------------------------------------
         local Tab = {}
 
+        ------------------------------------------------------------------
+        -- Tab:CreateLabel
+        ------------------------------------------------------------------
         function Tab:CreateLabel(text)
             local ef = ElemFrame(26)
             ef.BackgroundColor3 = Theme.Surface
@@ -561,6 +501,9 @@ function Library:CreateWindow(opts)
             })
         end
 
+        ------------------------------------------------------------------
+        -- Tab:CreateSection
+        ------------------------------------------------------------------
         function Tab:CreateSection(text)
             local ef = ElemFrame(22)
             ef.BackgroundTransparency = 1
@@ -575,6 +518,9 @@ function Library:CreateWindow(opts)
             })
         end
 
+        ------------------------------------------------------------------
+        -- Tab:CreateButton
+        ------------------------------------------------------------------
         function Tab:CreateButton(opts)
             opts = opts or {}
             local lbl = opts.Label    or "Button"
@@ -611,6 +557,9 @@ function Library:CreateWindow(opts)
             return btn2
         end
 
+        ------------------------------------------------------------------
+        -- Tab:CreateToggle
+        ------------------------------------------------------------------
         function Tab:CreateToggle(opts)
             opts = opts or {}
             local lbl   = opts.Label    or "Toggle"
@@ -672,6 +621,9 @@ function Library:CreateWindow(opts)
             return Toggle
         end
 
+        ------------------------------------------------------------------
+        -- Tab:CreateSlider
+        ------------------------------------------------------------------
         function Tab:CreateSlider(opts)
             opts = opts or {}
             local lbl  = opts.Label    or "Slider"
@@ -683,6 +635,7 @@ function Library:CreateWindow(opts)
 
             local ef = ElemFrame(54)
 
+            -- top row: name + current value
             local topRow = NewFrame({Trans=1, Size=UDim2.new(1,0,0,22), Z=6, Parent=ef})
             NewLabel({
                 Text   = lbl,
@@ -705,6 +658,7 @@ function Library:CreateWindow(opts)
                 Parent = topRow,
             })
 
+            -- bottom row: track
             local botRow = NewFrame({Trans=1, Size=UDim2.new(1,0,0,20), Pos=UDim2.new(0,0,0,26), Z=6, Parent=ef})
             local track  = NewFrame({
                 Color  = Theme.SliderTrack,
@@ -754,9 +708,10 @@ function Library:CreateWindow(opts)
             end)
             UserInputService.InputChanged:Connect(function(inp)
                 if not dragging then return end
-                if inp.UserInputType ~= Enum.UserInputType.MouseMovement
-                and inp.UserInputType ~= Enum.UserInputType.Touch then return end
-                Recalc(inp.Position.X)
+                if inp.UserInputType == Enum.UserInputType.MouseMovement
+                or inp.UserInputType == Enum.UserInputType.Touch then
+                    Recalc(inp.Position.X)
+                end
             end)
             UserInputService.InputEnded:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1
@@ -779,8 +734,8 @@ function Library:CreateWindow(opts)
             return Slider
         end
 
-        ------------------------------------------------------------------
-        -- FIXED: Tab:CreateDropdown (renders on top via global layer)
+------------------------------------------------------------------
+        -- Tab:CreateDropdown (Overhauled & Layer-Fixed)
         ------------------------------------------------------------------
         function Tab:CreateDropdown(opts)
             opts = opts or {}
@@ -791,22 +746,22 @@ function Library:CreateWindow(opts)
             local open     = false
 
             local ef = ElemFrame(38)
-            ef.ClipsDescendants = false
+            ef.ClipsDescendants = false -- Keep false so selection box can overflow safely
 
             NewLabel({
                 Text   = lbl,
                 Color  = Theme.TextPrimary,
                 Font   = Theme.FontUI,
                 Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(0.44,0,1,0),
+                Size   = UDim2.new(0.44, 0, 1, 0),
                 Z      = 6,
                 Parent = ef,
             })
 
             local dropBtn = Instance.new("TextButton")
             dropBtn.BackgroundColor3 = Theme.Surface
-            dropBtn.Size             = UDim2.new(0.53,0,0,26)
-            dropBtn.Position         = UDim2.new(0.46,0,0.5,-13)
+            dropBtn.Size             = UDim2.new(0.53, 0, 0, 26)
+            dropBtn.Position         = UDim2.new(0.46, 0, 0.5, -13)
             dropBtn.Text             = ("  %s  ▾"):format(selected)
             dropBtn.Font             = Theme.FontMono
             dropBtn.TextSize         = Theme.TextSizeSmall
@@ -816,134 +771,133 @@ function Library:CreateWindow(opts)
             dropBtn.ZIndex           = 7
             dropBtn.ClipsDescendants = false
             dropBtn.Parent           = ef
-            Decorate(dropBtn, UDim.new(0,4), Theme.Border, 1)
+            Decorate(dropBtn, UDim.new(0, 4), Theme.Border, 1)
 
-            -- GLOBAL LAYER: Parented to separate ScreenGui with DisplayOrder 100000
-            local listH = math.min(#choices, 6) * 28
+            -- Constants for dropdown sizing
+            local maxDisplayed = 6
+            local itemHeight = 28
+            local listH = math.min(#choices, maxDisplayed) * itemHeight
+
+            -- Base dropdown pane container (Starts at 0 height for smooth tween)
             local listFrame = NewFrame({
-                Color  = Theme.DropdownOverlay,
-                Size   = UDim2.new(0, 100, 0, listH),
-                Pos    = UDim2.new(0, 0, 0, 0),
-                Z      = 1000,
+                Color  = Theme.TitleBar,
+                Size   = UDim2.new(1, 0, 0, 0),
+                Pos    = UDim2.new(0, 0, 1, 4),
+                Z      = 22,
                 Clip   = true,
-                Parent = GetDropdownContainer(),
+                Parent = dropBtn,
             })
             listFrame.Visible = false
-            listFrame.Name = "DropdownList_" .. lbl
-            Decorate(listFrame, UDim.new(0,4), Theme.Border, 1)
+            Decorate(listFrame, UDim.new(0, 4), Theme.Border, 1)
 
-            -- Drop shadow
-            local shadow = Instance.new("ImageLabel")
-            shadow.BackgroundTransparency = 1
-            shadow.Image = "rbxassetid://5554236805"
-            shadow.ImageColor3 = Color3.new(0,0,0)
-            shadow.ImageTransparency = 0.6
-            shadow.ScaleType = Enum.ScaleType.Slice
-            shadow.SliceCenter = Rect.new(23,23,277,277)
-            shadow.Size = UDim2.new(1,20,1,20)
-            shadow.Position = UDim2.new(0,-10,0,-10)
-            shadow.ZIndex = 999
-            shadow.Parent = listFrame
+            -- Handle unified layout whether scrollable or static
+            local itemContainer = listFrame
+            if #choices > maxDisplayed then
+                local sf = Instance.new("ScrollingFrame")
+                sf.BackgroundTransparency = 1
+                sf.Size                   = UDim2.new(1, 0, 1, 0)
+                sf.CanvasSize             = UDim2.new(0, 0, 0, #choices * itemHeight)
+                sf.ScrollBarThickness     = 3
+                sf.ScrollBarImageColor3   = Theme.AccentDim
+                sf.BorderSizePixel        = 0
+                sf.ZIndex                 = 23
+                sf.Parent                 = listFrame
+                itemContainer = sf
+            end
 
             local ll = Instance.new("UIListLayout")
             ll.SortOrder = Enum.SortOrder.LayoutOrder
-            ll.Parent    = listFrame
+            ll.Parent    = itemContainer
 
-            local itemParent = listFrame
-            if #choices > 6 then
-                local sf = Instance.new("ScrollingFrame")
-                sf.BackgroundTransparency = 1
-                sf.Size = UDim2.new(1,0,1,0)
-                sf.CanvasSize = UDim2.new(0,0,0,#choices*28)
-                sf.ScrollBarThickness = 3
-                sf.ScrollBarImageColor3 = Theme.AccentDim
-                sf.BorderSizePixel = 0
-                sf.ZIndex = 1001
-                sf.Parent = listFrame
-                ll.Parent = sf
-                itemParent = sf
-            end
-
+            -- Unified loop removes copy-paste blocks for choice limits
             for i, choice in ipairs(choices) do
                 local item = Instance.new("TextButton")
-                item.BackgroundColor3 = Theme.DropdownOverlay
-                item.Size = UDim2.new(1,0,0,28)
-                item.Text = ("  %s"):format(choice)
-                item.Font = Theme.FontMono
-                item.TextSize = Theme.TextSizeSmall
-                item.TextColor3 = Theme.TextSecondary
-                item.TextXAlignment = Enum.TextXAlignment.Left
-                item.BorderSizePixel = 0
-                item.AutoButtonColor = false
-                item.LayoutOrder = i
-                item.ZIndex = 1002
-                item.Parent = itemParent
+                item.BackgroundColor3 = Theme.TitleBar
+                item.Size             = UDim2.new(1, 0, 0, itemHeight)
+                item.Text             = ("  %s"):format(choice)
+                item.Font             = Theme.FontMono
+                item.TextSize         = Theme.TextSizeSmall
+                item.TextColor3       = Theme.TextSecondary
+                item.TextXAlignment   = Enum.TextXAlignment.Left
+                item.BorderSizePixel  = 0
+                item.AutoButtonColor  = false
+                item.LayoutOrder      = i
+                item.ZIndex           = 24
+                item.Parent           = itemContainer
 
                 item.MouseEnter:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.SurfaceAlt,TextColor3=Theme.Accent})
+                    tw(item, {BackgroundColor3 = Theme.SurfaceAlt, TextColor3 = Theme.Accent})
                 end)
                 item.MouseLeave:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.DropdownOverlay,TextColor3=Theme.TextSecondary})
+                    tw(item, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
                 end)
+                
                 item.MouseButton1Click:Connect(function()
                     selected = choice
                     dropBtn.Text = ("  %s  ▾"):format(selected)
+                    
                     open = false
-                    listFrame.Visible = false
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
+                    
+                    task.delay(Theme.Tween.Time, function()
+                        if not open then
+                            listFrame.Visible = false
+                            ef.ZIndex = 5 -- Reset parent row ZIndex safety back down
+                        end
+                    end)
                     pcall(cb, selected)
                 end)
             end
 
-            local ddEntry = {
-                listFrame = listFrame,
-                button = dropBtn,
-                isOpen = false,
-            }
-            table.insert(GlobalDropdowns, ddEntry)
-
-            local function UpdateListPosition()
-                local absPos = dropBtn.AbsolutePosition
-                local absSize = dropBtn.AbsoluteSize
-                listFrame.Position = UDim2.new(0, absPos.X, 0, absPos.Y + absSize.Y + 4)
-                listFrame.Size = UDim2.new(0, absSize.X, 0, listH)
+            -- Unified processing for closing and opening states
+            local function SetDropdownState(targetState)
+                open = targetState
+                if open then
+                    ef.ZIndex = 30 -- Temporarily elevate layout priority above sibling items
+                    listFrame.Visible = true
+                    dropBtn.Text = ("  %s  ▴"):format(selected)
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt})
+                else
+                    dropBtn.Text = ("  %s  ▾"):format(selected)
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
+                    task.delay(Theme.Tween.Time, function()
+                        if not open then
+                            listFrame.Visible = false
+                            ef.ZIndex = 5 -- Restore safe priority index
+                        end
+                    end)
+                end
             end
 
             dropBtn.MouseButton1Click:Connect(function()
-                UpdateListPosition()
-                open = not open
-                ddEntry.isOpen = open
-                listFrame.Visible = open
-                CloseAllDropdowns(listFrame)
-                tw(dropBtn,{BackgroundColor3 = open and Theme.SurfaceAlt or Theme.Surface})
-            end)
-            dropBtn.MouseEnter:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.SurfaceAlt}) end
-            end)
-            dropBtn.MouseLeave:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.Surface}) end
+                SetDropdownState(not open)
             end)
 
-            local conn = RunService.RenderStepped:Connect(function()
-                if open then UpdateListPosition() end
+            dropBtn.MouseEnter:Connect(function()
+                if not open then tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt}) end
+            end)
+            dropBtn.MouseLeave:Connect(function()
+                if not open then tw(dropBtn, {BackgroundColor3 = Theme.Surface}) end
+            end)
+
+            UserInputService.InputBegan:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseButton1 and open then
+                    task.defer(function()
+                        SetDropdownState(false)
+                    end)
+                end
             end)
 
             local DD = {}
-            function DD:Set(v)
+            function DD:Set(v) 
                 selected = v
                 dropBtn.Text = ("  %s  ▾"):format(v)
-                pcall(cb, v)
+                pcall(cb, v) 
             end
             function DD:Get() return selected end
-            function DD:Destroy()
-                conn:Disconnect()
-                for i, entry in ipairs(GlobalDropdowns) do
-                    if entry == ddEntry then
-                        table.remove(GlobalDropdowns, i)
-                        break
-                    end
-                end
-                listFrame:Destroy()
-            end
             return DD
         end
 
@@ -1000,827 +954,26 @@ function Library:CreateWindow(opts)
             return Inp
         end
 
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateDropdownButton  (Dropdown + Execute Button)
-        ------------------------------------------------------------------
-        function Tab:CreateDropdownButton(opts)
-            opts = opts or {}
-            local lbl         = opts.Label       or "Action"
-            local choices     = opts.Options     or {}
-            local btnLabel    = opts.ButtonLabel or "EXECUTE"
-            local cb          = opts.Callback    or function() end
-            local selected    = opts.Default    or choices[1] or "None"
-
-            local ef = ElemFrame(38)
-            ef.ClipsDescendants = false
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(0.30,0,1,0),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local dropBtn = Instance.new("TextButton")
-            dropBtn.BackgroundColor3 = Theme.Surface
-            dropBtn.Size             = UDim2.new(0.35,0,0,26)
-            dropBtn.Position         = UDim2.new(0.31,0,0.5,-13)
-            dropBtn.Text             = ("  %s  ▾"):format(selected)
-            dropBtn.Font             = Theme.FontMono
-            dropBtn.TextSize         = Theme.TextSizeSmall
-            dropBtn.TextColor3       = Theme.Accent
-            dropBtn.BorderSizePixel  = 0
-            dropBtn.AutoButtonColor  = false
-            dropBtn.ZIndex           = 7
-            dropBtn.ClipsDescendants = false
-            dropBtn.Parent           = ef
-            Decorate(dropBtn, UDim.new(0,4), Theme.Border, 1)
-
-            local execBtn = Instance.new("TextButton")
-            execBtn.BackgroundColor3 = Theme.AccentDim
-            execBtn.Size             = UDim2.new(0.30,0,0,26)
-            execBtn.Position         = UDim2.new(0.68,0,0.5,-13)
-            execBtn.Text             = btnLabel:upper()
-            execBtn.Font             = Theme.FontMono
-            execBtn.TextSize         = Theme.TextSizeSmall
-            execBtn.TextColor3       = Theme.Background
-            execBtn.BorderSizePixel  = 0
-            execBtn.AutoButtonColor  = false
-            execBtn.ZIndex           = 7
-            execBtn.Parent           = ef
-            Decorate(execBtn, UDim.new(0,4), Theme.Border, 1)
-
-            -- GLOBAL LAYER dropdown list
-            local listH = math.min(#choices, 6) * 28
-            local listFrame = NewFrame({
-                Color  = Theme.DropdownOverlay,
-                Size   = UDim2.new(0, 100, 0, listH),
-                Pos    = UDim2.new(0, 0, 0, 0),
-                Z      = 1000,
-                Clip   = true,
-                Parent = GetDropdownContainer(),
-            })
-            listFrame.Visible = false
-            Decorate(listFrame, UDim.new(0,4), Theme.Border, 1)
-
-            local shadow = Instance.new("ImageLabel")
-            shadow.BackgroundTransparency = 1
-            shadow.Image = "rbxassetid://5554236805"
-            shadow.ImageColor3 = Color3.new(0,0,0)
-            shadow.ImageTransparency = 0.6
-            shadow.ScaleType = Enum.ScaleType.Slice
-            shadow.SliceCenter = Rect.new(23,23,277,277)
-            shadow.Size = UDim2.new(1,20,1,20)
-            shadow.Position = UDim2.new(0,-10,0,-10)
-            shadow.ZIndex = 999
-            shadow.Parent = listFrame
-
-            local ll = Instance.new("UIListLayout")
-            ll.SortOrder = Enum.SortOrder.LayoutOrder
-            ll.Parent = listFrame
-
-            local itemParent = listFrame
-            if #choices > 6 then
-                local sf = Instance.new("ScrollingFrame")
-                sf.BackgroundTransparency = 1
-                sf.Size = UDim2.new(1,0,1,0)
-                sf.CanvasSize = UDim2.new(0,0,0,#choices*28)
-                sf.ScrollBarThickness = 3
-                sf.ScrollBarImageColor3 = Theme.AccentDim
-                sf.BorderSizePixel = 0
-                sf.ZIndex = 1001
-                sf.Parent = listFrame
-                ll.Parent = sf
-                itemParent = sf
-            end
-
-            for i, choice in ipairs(choices) do
-                local item = Instance.new("TextButton")
-                item.BackgroundColor3 = Theme.DropdownOverlay
-                item.Size = UDim2.new(1,0,0,28)
-                item.Text = ("  %s"):format(choice)
-                item.Font = Theme.FontMono
-                item.TextSize = Theme.TextSizeSmall
-                item.TextColor3 = Theme.TextSecondary
-                item.TextXAlignment = Enum.TextXAlignment.Left
-                item.BorderSizePixel = 0
-                item.AutoButtonColor = false
-                item.LayoutOrder = i
-                item.ZIndex = 1002
-                item.Parent = itemParent
-                item.MouseEnter:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.SurfaceAlt,TextColor3=Theme.Accent})
-                end)
-                item.MouseLeave:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.DropdownOverlay,TextColor3=Theme.TextSecondary})
-                end)
-                item.MouseButton1Click:Connect(function()
-                    selected = choice
-                    dropBtn.Text = ("  %s  ▾"):format(selected)
-                    open = false
-                    listFrame.Visible = false
-                end)
-            end
-
-            local ddEntry = { listFrame = listFrame, button = dropBtn, isOpen = false }
-            table.insert(GlobalDropdowns, ddEntry)
-
-            local open = false
-            local function UpdateListPos()
-                local absPos = dropBtn.AbsolutePosition
-                local absSize = dropBtn.AbsoluteSize
-                listFrame.Position = UDim2.new(0, absPos.X, 0, absPos.Y + absSize.Y + 4)
-                listFrame.Size = UDim2.new(0, absSize.X, 0, listH)
-            end
-
-            dropBtn.MouseButton1Click:Connect(function()
-                UpdateListPos()
-                open = not open
-                ddEntry.isOpen = open
-                listFrame.Visible = open
-                CloseAllDropdowns(listFrame)
-                tw(dropBtn,{BackgroundColor3 = open and Theme.SurfaceAlt or Theme.Surface})
-            end)
-
-            local posConn = RunService.RenderStepped:Connect(function()
-                if open then UpdateListPos() end
-            end)
-
-            execBtn.MouseEnter:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.Accent, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseLeave:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.AccentDim, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseButton1Down:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.SurfaceAlt, TextColor3=Theme.Accent})
-            end)
-            execBtn.MouseButton1Up:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.Accent, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseButton1Click:Connect(function()
-                pcall(cb, selected)
-            end)
-
-            local Combo = {}
-            function Combo:SetSelection(v) selected = v; dropBtn.Text = ("  %s  ▾"):format(v) end
-            function Combo:GetSelection() return selected end
-            function Combo:SetButtonText(v) execBtn.Text = v:upper() end
-            function Combo:Destroy()
-                posConn:Disconnect()
-                for i, entry in ipairs(GlobalDropdowns) do
-                    if entry == ddEntry then table.remove(GlobalDropdowns, i); break end
-                end
-                listFrame:Destroy()
-            end
-            return Combo
-        end
-
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateInputButton  (TextInput + Execute Button)
-        ------------------------------------------------------------------
-        function Tab:CreateInputButton(opts)
-            opts = opts or {}
-            local lbl        = opts.Label       or "Command"
-            local ph         = opts.Placeholder or "enter..."
-            local btnLabel   = opts.ButtonLabel or "RUN"
-            local cb         = opts.Callback    or function() end
-            local clearOnRun = opts.ClearOnRun  ~= false
-
-            local ef = ElemFrame(38)
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(0.28,0,1,0),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local box = Instance.new("TextBox")
-            box.BackgroundColor3  = Theme.Surface
-            box.Size              = UDim2.new(0.42,0,0,26)
-            box.Position          = UDim2.new(0.29,0,0.5,-13)
-            box.Text              = ""
-            box.PlaceholderText   = ph
-            box.PlaceholderColor3 = Theme.TextDisabled
-            box.Font              = Theme.FontMono
-            box.TextSize          = Theme.TextSizeSmall
-            box.TextColor3        = Theme.Accent
-            box.BorderSizePixel   = 0
-            box.ZIndex            = 7
-            box.ClearTextOnFocus  = false
-            box.Parent            = ef
-            Decorate(box, UDim.new(0,4), Theme.Border, 1)
-
-            local p = Instance.new("UIPadding")
-            p.PaddingLeft = UDim.new(0,6)
-            p.Parent = box
-
-            local execBtn = Instance.new("TextButton")
-            execBtn.BackgroundColor3 = Theme.AccentDim
-            execBtn.Size             = UDim2.new(0.26,0,0,26)
-            execBtn.Position         = UDim2.new(0.73,0,0.5,-13)
-            execBtn.Text             = btnLabel:upper()
-            execBtn.Font             = Theme.FontMono
-            execBtn.TextSize         = Theme.TextSizeSmall
-            execBtn.TextColor3       = Theme.Background
-            execBtn.BorderSizePixel  = 0
-            execBtn.AutoButtonColor  = false
-            execBtn.ZIndex           = 7
-            execBtn.Parent           = ef
-            Decorate(execBtn, UDim.new(0,4), Theme.Border, 1)
-
-            local function Execute()
-                local txt = box.Text
-                pcall(cb, txt, true)
-                if clearOnRun then box.Text = "" end
-            end
-
-            box.Focused:Connect(function() tw(box,{BackgroundColor3=Theme.SurfaceAlt}) end)
-            box.FocusLost:Connect(function(enter)
-                tw(box,{BackgroundColor3=Theme.Surface})
-                if enter then Execute() end
-                pcall(cb, box.Text, enter)
-            end)
-
-            execBtn.MouseEnter:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.Accent, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseLeave:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.AccentDim, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseButton1Down:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.SurfaceAlt, TextColor3=Theme.Accent})
-            end)
-            execBtn.MouseButton1Up:Connect(function()
-                tw(execBtn,{BackgroundColor3=Theme.Accent, TextColor3=Theme.Background})
-            end)
-            execBtn.MouseButton1Click:Connect(Execute)
-
-            local InpBtn = {}
-            function InpBtn:Get() return box.Text end
-            function InpBtn:Set(v) box.Text = tostring(v) end
-            function InpBtn:SetButtonText(v) execBtn.Text = v:upper() end
-            function InpBtn:Execute() Execute() end
-            return InpBtn
-        end
-
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateKeybind
-        ------------------------------------------------------------------
-        function Tab:CreateKeybind(opts)
-            opts = opts or {}
-            local lbl      = opts.Label    or "Keybind"
-            local default  = opts.Default  or Enum.KeyCode.Unknown
-            local cb       = opts.Callback or function() end
-            local currentKey = default
-            local listening = false
-
-            local ef = ElemFrame(38)
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(1,-80,1,0),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local keyBtn = Instance.new("TextButton")
-            keyBtn.BackgroundColor3 = Theme.Surface
-            keyBtn.Size             = UDim2.new(0,70,0,26)
-            keyBtn.Position         = UDim2.new(1,-70,0.5,-13)
-            keyBtn.Text             = currentKey.Name ~= "Unknown" and currentKey.Name or "[NONE]"
-            keyBtn.Font             = Theme.FontMono
-            keyBtn.TextSize         = Theme.TextSizeSmall
-            keyBtn.TextColor3       = Theme.Accent
-            keyBtn.BorderSizePixel  = 0
-            keyBtn.AutoButtonColor  = false
-            keyBtn.ZIndex           = 7
-            keyBtn.Parent           = ef
-            Decorate(keyBtn, UDim.new(0,4), Theme.Border, 1)
-
-            local function SetKey(key)
-                currentKey = key
-                keyBtn.Text = key.Name ~= "Unknown" and key.Name or "[NONE]"
-                tw(keyBtn, {BackgroundColor3=Theme.Surface, TextColor3=Theme.Accent})
-                pcall(cb, currentKey)
-            end
-
-            keyBtn.MouseButton1Click:Connect(function()
-                if listening then return end
-                listening = true
-                keyBtn.Text = "[PRESS KEY]"
-                tw(keyBtn, {BackgroundColor3=Theme.SurfaceHover, TextColor3=Theme.TextPrimary})
-            end)
-
-            local inputConn = UserInputService.InputBegan:Connect(function(inp, gameProcessed)
-                if not listening then return end
-                if inp.UserInputType == Enum.UserInputType.Keyboard then
-                    listening = false
-                    SetKey(inp.KeyCode)
-                elseif inp.UserInputType == Enum.UserInputType.MouseButton1
-                    or inp.UserInputType == Enum.UserInputType.MouseButton2 then
-                    listening = false
-                    SetKey(Enum.KeyCode.Unknown)
-                end
-            end)
-
-            keyBtn.MouseEnter:Connect(function()
-                if not listening then tw(keyBtn,{BackgroundColor3=Theme.SurfaceAlt}) end
-            end)
-            keyBtn.MouseLeave:Connect(function()
-                if not listening then tw(keyBtn,{BackgroundColor3=Theme.Surface}) end
-            end)
-
-            local KB = {}
-            function KB:Set(key) SetKey(key) end
-            function KB:Get() return currentKey end
-            function KB:Destroy() inputConn:Disconnect() end
-            return KB
-        end
-
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateColorPicker
-        ------------------------------------------------------------------
-        function Tab:CreateColorPicker(opts)
-            opts = opts or {}
-            local lbl     = opts.Label    or "Color"
-            local default = opts.Default  or Color3.fromRGB(0,255,100)
-            local cb      = opts.Callback or function() end
-            local current = default
-            local open    = false
-
-            local ef = ElemFrame(38)
-            ef.ClipsDescendants = false
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(1,-56,1,0),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local preview = NewFrame({
-                Color  = current,
-                Size   = UDim2.new(0,40,0,22),
-                Pos    = UDim2.new(1,-40,0.5,-11),
-                Z      = 7,
-                Parent = ef,
-            })
-            Decorate(preview, UDim.new(0,4), Theme.Border, 1)
-
-            local hit = Instance.new("TextButton")
-            hit.BackgroundTransparency = 1
-            hit.Size = UDim2.new(1,0,1,0)
-            hit.Text = ""
-            hit.ZIndex = 8
-            hit.Parent = ef
-
-            local pickerFrame = NewFrame({
-                Color  = Theme.DropdownOverlay,
-                Size   = UDim2.new(0, 200, 0, 140),
-                Pos    = UDim2.new(0,0,0,0),
-                Z      = 1000,
-                Clip   = false,
-                Parent = GetDropdownContainer(),
-            })
-            pickerFrame.Visible = false
-            Decorate(pickerFrame, UDim.new(0,6), Theme.Border, 1)
-
-            local shadow = Instance.new("ImageLabel")
-            shadow.BackgroundTransparency = 1
-            shadow.Image = "rbxassetid://5554236805"
-            shadow.ImageColor3 = Color3.new(0,0,0)
-            shadow.ImageTransparency = 0.6
-            shadow.ScaleType = Enum.ScaleType.Slice
-            shadow.SliceCenter = Rect.new(23,23,277,277)
-            shadow.Size = UDim2.new(1,20,1,20)
-            shadow.Position = UDim2.new(0,-10,0,-10)
-            shadow.ZIndex = 999
-            shadow.Parent = pickerFrame
-
-            local hueLabel = NewLabel({
-                Text="HUE", Color=Theme.TextSecondary, Font=Theme.FontMono, Size2=9,
-                Size=UDim2.new(1,0,0,14), Z=1001, Parent=pickerFrame
-            })
-            local hueTrack = NewFrame({
-                Color=Color3.fromRGB(30,30,30), Size=UDim2.new(1,-16,0,10), Pos=UDim2.new(0,8,0,16), Z=1001, Parent=pickerFrame
-            })
-            Decorate(hueTrack, UDim.new(0,3), Theme.BorderDim, 1)
-            local hueFill = NewFrame({Color=Theme.Accent, Size=UDim2.new(0.5,0,1,0), Z=1002, Parent=hueTrack})
-            Decorate(hueFill, UDim.new(0,3), false)
-
-            local satLabel = NewLabel({
-                Text="SAT", Color=Theme.TextSecondary, Font=Theme.FontMono, Size2=9,
-                Size=UDim2.new(1,0,0,14), Pos=UDim2.new(0,0,0,32), Z=1001, Parent=pickerFrame
-            })
-            local satTrack = NewFrame({
-                Color=Color3.fromRGB(30,30,30), Size=UDim2.new(1,-16,0,10), Pos=UDim2.new(0,8,0,48), Z=1001, Parent=pickerFrame
-            })
-            Decorate(satTrack, UDim.new(0,3), Theme.BorderDim, 1)
-            local satFill = NewFrame({Color=Theme.Accent, Size=UDim2.new(0.8,0,1,0), Z=1002, Parent=satTrack})
-            Decorate(satFill, UDim.new(0,3), false)
-
-            local valLabel = NewLabel({
-                Text="VAL", Color=Theme.TextSecondary, Font=Theme.FontMono, Size2=9,
-                Size=UDim2.new(1,0,0,14), Pos=UDim2.new(0,0,0,64), Z=1001, Parent=pickerFrame
-            })
-            local valTrack = NewFrame({
-                Color=Color3.fromRGB(30,30,30), Size=UDim2.new(1,-16,0,10), Pos=UDim2.new(0,8,0,80), Z=1001, Parent=pickerFrame
-            })
-            Decorate(valTrack, UDim.new(0,3), Theme.BorderDim, 1)
-            local valFill = NewFrame({Color=Theme.Accent, Size=UDim2.new(0.6,0,1,0), Z=1002, Parent=valTrack})
-            Decorate(valFill, UDim.new(0,3), false)
-
-            local pickerPreview = NewFrame({
-                Color=current, Size=UDim2.new(0.4,0,0,24), Pos=UDim2.new(0.05,0,0,100), Z=1001, Parent=pickerFrame
-            })
-            Decorate(pickerPreview, UDim.new(0,4), Theme.Border, 1)
-
-            local okBtn = Instance.new("TextButton")
-            okBtn.BackgroundColor3 = Theme.AccentDim
-            okBtn.Size = UDim2.new(0.4,0,0,24)
-            okBtn.Position = UDim2.new(0.55,0,0,100)
-            okBtn.Text = "OK"
-            okBtn.Font = Theme.FontMono
-            okBtn.TextSize = 11
-            okBtn.TextColor3 = Theme.Background
-            okBtn.BorderSizePixel = 0
-            okBtn.AutoButtonColor = false
-            okBtn.ZIndex = 1001
-            okBtn.Parent = pickerFrame
-            Decorate(okBtn, UDim.new(0,4), Theme.Border, 1)
-
-            local h, s, v = Color3.toHSV(current)
-
-            local function UpdateFromHSV()
-                current = Color3.fromHSV(h, s, v)
-                preview.BackgroundColor3 = current
-                pickerPreview.BackgroundColor3 = current
-                hueFill.Size = UDim2.new(h,0,1,0)
-                satFill.Size = UDim2.new(s,0,1,0)
-                valFill.Size = UDim2.new(v,0,1,0)
-                pcall(cb, current)
-            end
-
-            local function MakeSliderInteractive(track, fill, updateFunc)
-                local dragging = false
-                track.InputBegan:Connect(function(inp)
-                    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                        dragging = true
-                        local pct = math.clamp((inp.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-                        updateFunc(pct)
-                    end
-                end)
-                UserInputService.InputChanged:Connect(function(inp)
-                    if not dragging then return end
-                    if inp.UserInputType == Enum.UserInputType.MouseMovement then
-                        local pct = math.clamp((inp.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-                        updateFunc(pct)
-                    end
-                end)
-                UserInputService.InputEnded:Connect(function(inp)
-                    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                        dragging = false
-                    end
-                end)
-            end
-
-            MakeSliderInteractive(hueTrack, hueFill, function(pct) h = pct; UpdateFromHSV() end)
-            MakeSliderInteractive(satTrack, satFill, function(pct) s = pct; UpdateFromHSV() end)
-            MakeSliderInteractive(valTrack, valFill, function(pct) v = pct; UpdateFromHSV() end)
-
-            local function UpdatePickerPos()
-                local absPos = preview.AbsolutePosition
-                local absSize = preview.AbsoluteSize
-                pickerFrame.Position = UDim2.new(0, absPos.X - 160, 0, absPos.Y + absSize.Y + 4)
-            end
-
-            hit.MouseButton1Click:Connect(function()
-                UpdatePickerPos()
-                open = not open
-                pickerFrame.Visible = open
-                CloseAllDropdowns(nil)
-            end)
-
-            okBtn.MouseButton1Click:Connect(function()
-                open = false
-                pickerFrame.Visible = false
-            end)
-
-            okBtn.MouseEnter:Connect(function() tw(okBtn,{BackgroundColor3=Theme.Accent}) end)
-            okBtn.MouseLeave:Connect(function() tw(okBtn,{BackgroundColor3=Theme.AccentDim}) end)
-
-            local posConn = RunService.RenderStepped:Connect(function()
-                if open then UpdatePickerPos() end
-            end)
-
-            local CP = {}
-            function CP:Set(color)
-                current = color
-                h, s, v = Color3.toHSV(current)
-                preview.BackgroundColor3 = current
-                pickerPreview.BackgroundColor3 = current
-                hueFill.Size = UDim2.new(h,0,1,0)
-                satFill.Size = UDim2.new(s,0,1,0)
-                valFill.Size = UDim2.new(v,0,1,0)
-                pcall(cb, current)
-            end
-            function CP:Get() return current end
-            function CP:Destroy()
-                posConn:Disconnect()
-                pickerFrame:Destroy()
-            end
-            return CP
-        end
-
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateMultiDropdown  (Multi-select dropdown)
-        ------------------------------------------------------------------
-        function Tab:CreateMultiDropdown(opts)
-            opts = opts or {}
-            local lbl       = opts.Label    or "Multi Select"
-            local choices   = opts.Options  or {}
-            local cb        = opts.Callback or function() end
-            local selected  = {}
-            if opts.Default then
-                for _, v in ipairs(opts.Default) do selected[v] = true end
-            end
-            local open = false
-
-            local ef = ElemFrame(38)
-            ef.ClipsDescendants = false
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(0.44,0,1,0),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local function GetDisplayText()
-                local count = 0
-                for _ in pairs(selected) do count = count + 1 end
-                if count == 0 then return "  NONE  ▾" end
-                if count == 1 then
-                    for k in pairs(selected) do return ("  %s  ▾"):format(k) end
-                end
-                return ("  %d SELECTED  ▾"):format(count)
-            end
-
-            local dropBtn = Instance.new("TextButton")
-            dropBtn.BackgroundColor3 = Theme.Surface
-            dropBtn.Size             = UDim2.new(0.53,0,0,26)
-            dropBtn.Position         = UDim2.new(0.46,0,0.5,-13)
-            dropBtn.Text             = GetDisplayText()
-            dropBtn.Font             = Theme.FontMono
-            dropBtn.TextSize         = Theme.TextSizeSmall
-            dropBtn.TextColor3       = Theme.Accent
-            dropBtn.BorderSizePixel  = 0
-            dropBtn.AutoButtonColor  = false
-            dropBtn.ZIndex           = 7
-            dropBtn.ClipsDescendants = false
-            dropBtn.Parent           = ef
-            Decorate(dropBtn, UDim.new(0,4), Theme.Border, 1)
-
-            local listH = math.min(#choices, 6) * 28
-            local listFrame = NewFrame({
-                Color  = Theme.DropdownOverlay,
-                Size   = UDim2.new(0, 100, 0, listH),
-                Pos    = UDim2.new(0, 0, 0, 0),
-                Z      = 1000,
-                Clip   = true,
-                Parent = GetDropdownContainer(),
-            })
-            listFrame.Visible = false
-            Decorate(listFrame, UDim.new(0,4), Theme.Border, 1)
-
-            local shadow = Instance.new("ImageLabel")
-            shadow.BackgroundTransparency = 1
-            shadow.Image = "rbxassetid://5554236805"
-            shadow.ImageColor3 = Color3.new(0,0,0)
-            shadow.ImageTransparency = 0.6
-            shadow.ScaleType = Enum.ScaleType.Slice
-            shadow.SliceCenter = Rect.new(23,23,277,277)
-            shadow.Size = UDim2.new(1,20,1,20)
-            shadow.Position = UDim2.new(0,-10,0,-10)
-            shadow.ZIndex = 999
-            shadow.Parent = listFrame
-
-            local ll = Instance.new("UIListLayout")
-            ll.SortOrder = Enum.SortOrder.LayoutOrder
-            ll.Parent = listFrame
-
-            local itemParent = listFrame
-            if #choices > 6 then
-                local sf = Instance.new("ScrollingFrame")
-                sf.BackgroundTransparency = 1
-                sf.Size = UDim2.new(1,0,1,0)
-                sf.CanvasSize = UDim2.new(0,0,0,#choices*28)
-                sf.ScrollBarThickness = 3
-                sf.ScrollBarImageColor3 = Theme.AccentDim
-                sf.BorderSizePixel = 0
-                sf.ZIndex = 1001
-                sf.Parent = listFrame
-                ll.Parent = sf
-                itemParent = sf
-            end
-
-            local itemButtons = {}
-            for i, choice in ipairs(choices) do
-                local item = Instance.new("TextButton")
-                item.BackgroundColor3 = Theme.DropdownOverlay
-                item.Size = UDim2.new(1,0,0,28)
-                item.Text = ("  %s"):format(choice)
-                item.Font = Theme.FontMono
-                item.TextSize = Theme.TextSizeSmall
-                item.TextColor3 = selected[choice] and Theme.Accent or Theme.TextSecondary
-                item.TextXAlignment = Enum.TextXAlignment.Left
-                item.BorderSizePixel = 0
-                item.AutoButtonColor = false
-                item.LayoutOrder = i
-                item.ZIndex = 1002
-                item.Parent = itemParent
-
-                local check = Instance.new("TextLabel")
-                check.BackgroundTransparency = 1
-                check.Size = UDim2.new(0,20,1,0)
-                check.Position = UDim2.new(1,-20,0,0)
-                check.Text = selected[choice] and "✓" or ""
-                check.Font = Theme.FontBold
-                check.TextSize = 12
-                check.TextColor3 = Theme.Accent
-                check.ZIndex = 1003
-                check.Parent = item
-
-                item.MouseEnter:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.SurfaceAlt})
-                end)
-                item.MouseLeave:Connect(function()
-                    tw(item,{BackgroundColor3=Theme.DropdownOverlay})
-                end)
-                item.MouseButton1Click:Connect(function()
-                    selected[choice] = not selected[choice]
-                    if not selected[choice] then selected[choice] = nil end
-                    item.TextColor3 = selected[choice] and Theme.Accent or Theme.TextSecondary
-                    check.Text = selected[choice] and "✓" or ""
-                    dropBtn.Text = GetDisplayText()
-
-                    local result = {}
-                    for k in pairs(selected) do table.insert(result, k) end
-                    pcall(cb, result)
-                end)
-
-                itemButtons[choice] = item
-            end
-
-            local ddEntry = { listFrame = listFrame, button = dropBtn, isOpen = false }
-            table.insert(GlobalDropdowns, ddEntry)
-
-            local function UpdateListPos()
-                local absPos = dropBtn.AbsolutePosition
-                local absSize = dropBtn.AbsoluteSize
-                listFrame.Position = UDim2.new(0, absPos.X, 0, absPos.Y + absSize.Y + 4)
-                listFrame.Size = UDim2.new(0, absSize.X, 0, listH)
-            end
-
-            dropBtn.MouseButton1Click:Connect(function()
-                UpdateListPos()
-                open = not open
-                ddEntry.isOpen = open
-                listFrame.Visible = open
-                CloseAllDropdowns(listFrame)
-                tw(dropBtn,{BackgroundColor3 = open and Theme.SurfaceAlt or Theme.Surface})
-            end)
-            dropBtn.MouseEnter:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.SurfaceAlt}) end
-            end)
-            dropBtn.MouseLeave:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.Surface}) end
-            end)
-
-            local posConn = RunService.RenderStepped:Connect(function()
-                if open then UpdateListPos() end
-            end)
-
-            local MD = {}
-            function MD:Set(vals)
-                selected = {}
-                for _, v in ipairs(vals) do selected[v] = true end
-                dropBtn.Text = GetDisplayText()
-                for choice, btn in pairs(itemButtons) do
-                    btn.TextColor3 = selected[choice] and Theme.Accent or Theme.TextSecondary
-                    for _, child in ipairs(btn:GetChildren()) do
-                        if child:IsA("TextLabel") then child.Text = selected[choice] and "✓" or "" end
-                    end
-                end
-                local result = {}
-                for k in pairs(selected) do table.insert(result, k) end
-                pcall(cb, result)
-            end
-            function MD:Get()
-                local result = {}
-                for k in pairs(selected) do table.insert(result, k) end
-                return result
-            end
-            function MD:Destroy()
-                posConn:Disconnect()
-                for i, entry in ipairs(GlobalDropdowns) do
-                    if entry == ddEntry then table.remove(GlobalDropdowns, i); break end
-                end
-                listFrame:Destroy()
-            end
-            return MD
-        end
-
-        ------------------------------------------------------------------
-        -- NEW: Tab:CreateProgressBar
-        ------------------------------------------------------------------
-        function Tab:CreateProgressBar(opts)
-            opts = opts or {}
-            local lbl   = opts.Label or "Progress"
-            local val   = math.clamp(opts.Value or 0, 0, 100)
-            local showPct = opts.ShowPercent ~= false
-
-            local ef = ElemFrame(40)
-
-            NewLabel({
-                Text   = lbl,
-                Color  = Theme.TextPrimary,
-                Font   = Theme.FontUI,
-                Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(1,0,0,18),
-                Z      = 6,
-                Parent = ef,
-            })
-
-            local track = NewFrame({
-                Color  = Theme.SliderTrack,
-                Size   = UDim2.new(1,0,0,10),
-                Pos    = UDim2.new(0,0,0,22),
-                Z      = 6,
-                Parent = ef,
-            })
-            Decorate(track, UDim.new(0,3), Theme.BorderDim, 1)
-
-            local fill = NewFrame({
-                Color  = Theme.Accent,
-                Size   = UDim2.new(val/100, 0, 1, 0),
-                Z      = 7,
-                Parent = track,
-            })
-            Decorate(fill, UDim.new(0,3), false)
-
-            local pctLbl = nil
-            if showPct then
-                pctLbl = NewLabel({
-                    Text   = tostring(math.floor(val)) .. "%",
-                    Color  = Theme.TextSecondary,
-                    Font   = Theme.FontMono,
-                    Size2  = 9,
-                    AlignX = Enum.TextXAlignment.Right,
-                    Size   = UDim2.new(1,0,0,18),
-                    Z      = 6,
-                    Parent = ef,
-                })
-            end
-
-            local PB = {}
-            function PB:Set(v)
-                val = math.clamp(v, 0, 100)
-                tw(fill, {Size = UDim2.new(val/100, 0, 1, 0)})
-                if pctLbl then pctLbl.Text = tostring(math.floor(val)) .. "%" end
-            end
-            function PB:Get() return val end
-            return PB
-        end
-
         return Tab
-    end
+    end  -- CreateTab
 
+    -- Animate open
     tw(win, {Size = UDim2.new(0,W,0,H)}, Theme.TweenSlow)
-    return Window
-end
 
+    return Window
+end  -- CreateWindow
+
+------------------------------------------------------------------------
+-- Library:SetTheme  (runtime palette override)
+------------------------------------------------------------------------
 function Library:SetTheme(overrides)
     for k,v in pairs(overrides) do
         if Theme[k] ~= nil then Theme[k] = v end
     end
 end
 
+------------------------------------------------------------------------
+-- Return so loadstring callers can capture it:
+--   local Lib = loadstring(game:HttpGet(URL, true))()
+------------------------------------------------------------------------
 return Library
