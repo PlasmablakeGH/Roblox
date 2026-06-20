@@ -207,7 +207,7 @@ function Library:CreateWindow(opts)
     local sg = Instance.new("ScreenGui")
     sg.Name             = "PlasmaLibUI_" .. TITLE:gsub("%s","")
     sg.ResetOnSpawn     = false
-    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Global
+    sg.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
     sg.IgnoreGuiInset   = true
     sg.DisplayOrder     = 999
     sg.Parent           = GuiParent()
@@ -745,8 +745,8 @@ function Library:CreateWindow(opts)
             return Slider
         end
 
-        ------------------------------------------------------------------
-        -- Tab:CreateDropdown
+------------------------------------------------------------------
+        -- Tab:CreateDropdown (Overhauled & Layer-Fixed)
         ------------------------------------------------------------------
         function Tab:CreateDropdown(opts)
             opts = opts or {}
@@ -757,22 +757,22 @@ function Library:CreateWindow(opts)
             local open     = false
 
             local ef = ElemFrame(38)
-            ef.ClipsDescendants = false
+            ef.ClipsDescendants = false -- Keep false so selection box can overflow safely
 
             NewLabel({
                 Text   = lbl,
                 Color  = Theme.TextPrimary,
                 Font   = Theme.FontUI,
                 Size2  = Theme.TextSizeBody,
-                Size   = UDim2.new(0.44,0,1,0),
+                Size   = UDim2.new(0.44, 0, 1, 0),
                 Z      = 6,
                 Parent = ef,
             })
 
             local dropBtn = Instance.new("TextButton")
             dropBtn.BackgroundColor3 = Theme.Surface
-            dropBtn.Size             = UDim2.new(0.53,0,0,26)
-            dropBtn.Position         = UDim2.new(0.46,0,0.5,-13)
+            dropBtn.Size             = UDim2.new(0.53, 0, 0, 26)
+            dropBtn.Position         = UDim2.new(0.46, 0, 0.5, -13)
             dropBtn.Text             = ("  %s  ▾"):format(selected)
             dropBtn.Font             = Theme.FontMono
             dropBtn.TextSize         = Theme.TextSizeSmall
@@ -782,116 +782,132 @@ function Library:CreateWindow(opts)
             dropBtn.ZIndex           = 7
             dropBtn.ClipsDescendants = false
             dropBtn.Parent           = ef
-            Decorate(dropBtn, UDim.new(0,4), Theme.Border, 1)
+            Decorate(dropBtn, UDim.new(0, 4), Theme.Border, 1)
 
-            local listH = math.min(#choices, 6) * 28
+            -- Constants for dropdown sizing
+            local maxDisplayed = 6
+            local itemHeight = 28
+            local listH = math.min(#choices, maxDisplayed) * itemHeight
+
+            -- Base dropdown pane container (Starts at 0 height for smooth tween)
             local listFrame = NewFrame({
                 Color  = Theme.TitleBar,
-                Size   = UDim2.new(1,0,0,listH),
-                Pos    = UDim2.new(0,0,1,4),
+                Size   = UDim2.new(1, 0, 0, 0),
+                Pos    = UDim2.new(0, 0, 1, 4),
                 Z      = 22,
                 Clip   = true,
                 Parent = dropBtn,
             })
             listFrame.Visible = false
-            Decorate(listFrame, UDim.new(0,4), Theme.Border, 1)
+            Decorate(listFrame, UDim.new(0, 4), Theme.Border, 1)
 
-            local ll = Instance.new("UIListLayout")
-            ll.SortOrder = Enum.SortOrder.LayoutOrder
-            ll.Parent    = listFrame
-
-            -- If more than 6 choices, make the list scrollable
-            if #choices > 6 then
+            -- Handle unified layout whether scrollable or static
+            local itemContainer = listFrame
+            if #choices > maxDisplayed then
                 local sf = Instance.new("ScrollingFrame")
                 sf.BackgroundTransparency = 1
-                sf.Size                   = UDim2.new(1,0,1,0)
-                sf.CanvasSize             = UDim2.new(0,0,0,#choices*28)
+                sf.Size                   = UDim2.new(1, 0, 1, 0)
+                sf.CanvasSize             = UDim2.new(0, 0, 0, #choices * itemHeight)
                 sf.ScrollBarThickness     = 3
                 sf.ScrollBarImageColor3   = Theme.AccentDim
                 sf.BorderSizePixel        = 0
+                sf.ZIndex                 = 23
                 sf.Parent                 = listFrame
-                ll.Parent = sf
-                -- rebuild items inside sf
-                for i, choice in ipairs(choices) do
-                    local item = Instance.new("TextButton")
-                    item.BackgroundColor3 = Theme.TitleBar
-                    item.Size             = UDim2.new(1,0,0,28)
-                    item.Text             = ("  %s"):format(choice)
-                    item.Font             = Theme.FontMono
-                    item.TextSize         = Theme.TextSizeSmall
-                    item.TextColor3       = Theme.TextSecondary
-                    item.TextXAlignment   = Enum.TextXAlignment.Left
-                    item.BorderSizePixel  = 0
-                    item.AutoButtonColor  = false
-                    item.LayoutOrder      = i
-                    item.ZIndex           = 23
-                    item.Parent           = sf
-                    item.MouseEnter:Connect(function()
-                        tw(item,{BackgroundColor3=Theme.SurfaceAlt,TextColor3=Theme.Accent})
+                itemContainer = sf
+            end
+
+            local ll = Instance.new("UIListLayout")
+            ll.SortOrder = Enum.SortOrder.LayoutOrder
+            ll.Parent    = itemContainer
+
+            -- Unified loop removes copy-paste blocks for choice limits
+            for i, choice in ipairs(choices) do
+                local item = Instance.new("TextButton")
+                item.BackgroundColor3 = Theme.TitleBar
+                item.Size             = UDim2.new(1, 0, 0, itemHeight)
+                item.Text             = ("  %s"):format(choice)
+                item.Font             = Theme.FontMono
+                item.TextSize         = Theme.TextSizeSmall
+                item.TextColor3       = Theme.TextSecondary
+                item.TextXAlignment   = Enum.TextXAlignment.Left
+                item.BorderSizePixel  = 0
+                item.AutoButtonColor  = false
+                item.LayoutOrder      = i
+                item.ZIndex           = 24
+                item.Parent           = itemContainer
+
+                item.MouseEnter:Connect(function()
+                    tw(item, {BackgroundColor3 = Theme.SurfaceAlt, TextColor3 = Theme.Accent})
+                end)
+                item.MouseLeave:Connect(function()
+                    tw(item, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
+                end)
+                
+                item.MouseButton1Click:Connect(function()
+                    selected = choice
+                    dropBtn.Text = ("  %s  ▾"):format(selected)
+                    
+                    open = false
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
+                    
+                    task.delay(Theme.Tween.Time, function()
+                        if not open then
+                            listFrame.Visible = false
+                            ef.ZIndex = 5 -- Reset parent row ZIndex safety back down
+                        end
                     end)
-                    item.MouseLeave:Connect(function()
-                        tw(item,{BackgroundColor3=Theme.TitleBar,TextColor3=Theme.TextSecondary})
-                    end)
-                    item.MouseButton1Click:Connect(function()
-                        selected = choice
-                        dropBtn.Text = ("  %s  ▾"):format(selected)
-                        open = false; listFrame.Visible = false
-                        pcall(cb, selected)
-                    end)
-                end
-            else
-                for i, choice in ipairs(choices) do
-                    local item = Instance.new("TextButton")
-                    item.BackgroundColor3 = Theme.TitleBar
-                    item.Size             = UDim2.new(1,0,0,28)
-                    item.Text             = ("  %s"):format(choice)
-                    item.Font             = Theme.FontMono
-                    item.TextSize         = Theme.TextSizeSmall
-                    item.TextColor3       = Theme.TextSecondary
-                    item.TextXAlignment   = Enum.TextXAlignment.Left
-                    item.BorderSizePixel  = 0
-                    item.AutoButtonColor  = false
-                    item.LayoutOrder      = i
-                    item.ZIndex           = 23
-                    item.Parent           = listFrame
-                    item.MouseEnter:Connect(function()
-                        tw(item,{BackgroundColor3=Theme.SurfaceAlt,TextColor3=Theme.Accent})
-                    end)
-                    item.MouseLeave:Connect(function()
-                        tw(item,{BackgroundColor3=Theme.TitleBar,TextColor3=Theme.TextSecondary})
-                    end)
-                    item.MouseButton1Click:Connect(function()
-                        selected = choice
-                        dropBtn.Text = ("  %s  ▾"):format(selected)
-                        open = false; listFrame.Visible = false
-                        pcall(cb, selected)
+                    pcall(cb, selected)
+                end)
+            end
+
+            -- Unified processing for closing and opening states
+            local function SetDropdownState(targetState)
+                open = targetState
+                if open then
+                    ef.ZIndex = 30 -- Temporarily elevate layout priority above sibling items
+                    listFrame.Visible = true
+                    dropBtn.Text = ("  %s  ▴"):format(selected)
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt})
+                else
+                    dropBtn.Text = ("  %s  ▾"):format(selected)
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
+                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
+                    task.delay(Theme.Tween.Time, function()
+                        if not open then
+                            listFrame.Visible = false
+                            ef.ZIndex = 5 -- Restore safe priority index
+                        end
                     end)
                 end
             end
 
             dropBtn.MouseButton1Click:Connect(function()
-                open = not open
-                listFrame.Visible = open
-                tw(dropBtn,{BackgroundColor3 = open and Theme.SurfaceAlt or Theme.Surface})
+                SetDropdownState(not open)
             end)
+
             dropBtn.MouseEnter:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.SurfaceAlt}) end
+                if not open then tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt}) end
             end)
             dropBtn.MouseLeave:Connect(function()
-                if not open then tw(dropBtn,{BackgroundColor3=Theme.Surface}) end
+                if not open then tw(dropBtn, {BackgroundColor3 = Theme.Surface}) end
             end)
+
             UserInputService.InputBegan:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1 and open then
                     task.defer(function()
-                        open = false
-                        listFrame.Visible = false
-                        tw(dropBtn,{BackgroundColor3=Theme.Surface})
+                        SetDropdownState(false)
                     end)
                 end
             end)
 
             local DD = {}
-            function DD:Set(v) selected=v; dropBtn.Text=("  %s  ▾"):format(v); pcall(cb,v) end
+            function DD:Set(v) 
+                selected = v
+                dropBtn.Text = ("  %s  ▾"):format(v)
+                pcall(cb, v) 
+            end
             function DD:Get() return selected end
             return DD
         end
