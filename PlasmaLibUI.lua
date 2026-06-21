@@ -737,6 +737,9 @@ function Library:CreateWindow(opts)
 ------------------------------------------------------------------
         -- Tab:CreateDropdown (Overhauled & Layer-Fixed)
         ------------------------------------------------------------------
+      ------------------------------------------------------------------
+        -- Tab:CreateDropdown (Overhauled, Layer-Fixed & Dynamic)
+        ------------------------------------------------------------------
         function Tab:CreateDropdown(opts)
             opts = opts or {}
             local lbl      = opts.Label    or "Dropdown"
@@ -776,9 +779,8 @@ function Library:CreateWindow(opts)
             -- Constants for dropdown sizing
             local maxDisplayed = 6
             local itemHeight = 28
-            local listH = math.min(#choices, maxDisplayed) * itemHeight
 
-            -- Base dropdown pane container (Starts at 0 height for smooth tween)
+            -- Base dropdown pane container
             local listFrame = NewFrame({
                 Color  = Theme.TitleBar,
                 Size   = UDim2.new(1, 0, 0, 0),
@@ -790,117 +792,110 @@ function Library:CreateWindow(opts)
             listFrame.Visible = false
             Decorate(listFrame, UDim.new(0, 4), Theme.Border, 1)
 
-            -- Handle unified layout whether scrollable or static
-            local itemContainer = listFrame
-            if #choices > maxDisplayed then
-                local sf = Instance.new("ScrollingFrame")
-                sf.BackgroundTransparency = 1
-                sf.Size                   = UDim2.new(1, 0, 1, 0)
-                sf.CanvasSize             = UDim2.new(0, 0, 0, #choices * itemHeight)
-                sf.ScrollBarThickness     = 3
-                sf.ScrollBarImageColor3   = Theme.AccentDim
-                sf.BorderSizePixel        = 0
-                sf.ZIndex                 = 23
-                sf.Parent                 = listFrame
-                itemContainer = sf
-            end
+            -- Unified ScrollingFrame (auto-handles both small and large lists)
+            local itemContainer = Instance.new("ScrollingFrame")
+            itemContainer.BackgroundTransparency = 1
+            itemContainer.Size                   = UDim2.new(1, 0, 1, 0)
+            itemContainer.ScrollBarThickness     = 3
+            itemContainer.ScrollBarImageColor3   = Theme.AccentDim
+            itemContainer.BorderSizePixel        = 0
+            itemContainer.ZIndex                 = 23
+            itemContainer.Parent                 = listFrame
 
             local ll = Instance.new("UIListLayout")
             ll.SortOrder = Enum.SortOrder.LayoutOrder
             ll.Parent    = itemContainer
 
-            -- Unified loop removes copy-paste blocks for choice limits
-            for i, choice in ipairs(choices) do
-                local item = Instance.new("TextButton")
-                item.BackgroundColor3 = Theme.TitleBar
-                item.Size             = UDim2.new(1, 0, 0, itemHeight)
-                item.Text             = ("  %s"):format(choice)
-                item.Font             = Theme.FontMono
-                item.TextSize         = Theme.TextSizeSmall
-                item.TextColor3       = Theme.TextSecondary
-                item.TextXAlignment   = Enum.TextXAlignment.Left
-                item.BorderSizePixel  = 0
-                item.AutoButtonColor  = false
-                item.LayoutOrder      = i
-                item.ZIndex           = 24
-                item.Parent           = itemContainer
-
-                item.MouseEnter:Connect(function()
-                    tw(item, {BackgroundColor3 = Theme.SurfaceAlt, TextColor3 = Theme.Accent})
-                end)
-                item.MouseLeave:Connect(function()
-                    tw(item, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
-                end)
-                
-                item.MouseButton1Click:Connect(function()
-                    selected = choice
-                    dropBtn.Text = ("  %s  ▾"):format(selected)
-                    
-                    open = false
-                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
-                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
-                    
-                    task.delay(Theme.Tween.Time, function()
-                        if not open then
-                            listFrame.Visible = false
-                            ef.ZIndex = 5 -- Reset parent row ZIndex safety back down
-                        end
-                    end)
-                    pcall(cb, selected)
+            -- Animation Helpers
+            local function Close()
+                open = false
+                tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
+                -- Wait for tween to finish before hiding to prevent visual snapping
+                task.delay(0.16, function() 
+                    if not open then listFrame.Visible = false end 
                 end)
             end
 
-            -- Unified processing for closing and opening states
-            local function SetDropdownState(targetState)
-                open = targetState
-                if open then
-                    ef.ZIndex = 30 -- Temporarily elevate layout priority above sibling items
-                    listFrame.Visible = true
-                    dropBtn.Text = ("  %s  ▴"):format(selected)
-                    tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
-                    tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt})
-                else
-                    dropBtn.Text = ("  %s  ▾"):format(selected)
-                    tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
-                    tw(dropBtn, {BackgroundColor3 = Theme.Surface})
-                    task.delay(Theme.Tween.Time, function()
-                        if not open then
-                            listFrame.Visible = false
-                            ef.ZIndex = 5 -- Restore safe priority index
-                        end
-                    end)
-                end
+            local function Open()
+                open = true
+                listFrame.Visible = true
+                local listH = math.min(#choices, maxDisplayed) * itemHeight
+                tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
             end
 
             dropBtn.MouseButton1Click:Connect(function()
-                SetDropdownState(not open)
+                if open then Close() else Open() end
             end)
 
-            dropBtn.MouseEnter:Connect(function()
-                if not open then tw(dropBtn, {BackgroundColor3 = Theme.SurfaceAlt}) end
-            end)
-            dropBtn.MouseLeave:Connect(function()
-                if not open then tw(dropBtn, {BackgroundColor3 = Theme.Surface}) end
-            end)
+            -- Public API for this specific Dropdown
+            local Dropdown = {}
 
-            UserInputService.InputBegan:Connect(function(inp)
-                if inp.UserInputType == Enum.UserInputType.MouseButton1 and open then
-                    task.defer(function()
-                        SetDropdownState(false)
+            function Dropdown:Refresh(newOptions)
+                choices = newOptions or {}
+                
+                -- Clear old buttons
+                for _, child in ipairs(itemContainer:GetChildren()) do
+                    if child:IsA("TextButton") then
+                        child:Destroy()
+                    end
+                end
+
+                -- Recalculate canvas size based on new item count
+                itemContainer.CanvasSize = UDim2.new(0, 0, 0, #choices * itemHeight)
+
+                -- Populate new options
+                for i, choice in ipairs(choices) do
+                    local item = Instance.new("TextButton")
+                    item.BackgroundColor3 = Theme.TitleBar
+                    item.Size             = UDim2.new(1, 0, 0, itemHeight)
+                    item.Text             = ("  %s"):format(tostring(choice))
+                    item.TextXAlignment   = Enum.TextXAlignment.Left
+                    item.Font             = Theme.FontMono
+                    item.TextSize         = Theme.TextSizeSmall
+                    item.TextColor3       = Theme.TextSecondary
+                    item.BorderSizePixel  = 0
+                    item.AutoButtonColor  = false
+                    item.ZIndex           = 24
+                    item.Parent           = itemContainer
+
+                    -- Hover Animations
+                    item.MouseEnter:Connect(function()
+                        tw(item, {BackgroundColor3 = Theme.SurfaceAlt, TextColor3 = Theme.Accent})
+                    end)
+                    item.MouseLeave:Connect(function()
+                        tw(item, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
+                    end)
+
+                    -- Selection Logic
+                    item.MouseButton1Click:Connect(function()
+                        selected = choice
+                        dropBtn.Text = ("  %s  ▾"):format(selected)
+                        Close()
+                        pcall(cb, selected)
                     end)
                 end
-            end)
-
-            local DD = {}
-            function DD:Set(v) 
-                selected = v
-                dropBtn.Text = ("  %s  ▾"):format(v)
-                pcall(cb, v) 
+                
+                -- If it's currently open, dynamically adjust the height of the frame
+                if open then
+                    local listH = math.min(#choices, maxDisplayed) * itemHeight
+                    tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
+                end
             end
-            function DD:Get() return selected end
-            return DD
-        end
 
+            function Dropdown:Get()
+                return selected
+            end
+
+            function Dropdown:Set(val)
+                selected = val
+                dropBtn.Text = ("  %s  ▾"):format(selected)
+                pcall(cb, selected)
+            end
+
+            -- Initialize the dropdown with the default provided options
+            Dropdown:Refresh(choices)
+            return Dropdown
+        end
         ------------------------------------------------------------------
         -- Tab:CreateTextInput
         ------------------------------------------------------------------
