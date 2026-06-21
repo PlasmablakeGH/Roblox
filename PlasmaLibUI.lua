@@ -740,6 +740,9 @@ function Library:CreateWindow(opts)
       ------------------------------------------------------------------
         -- Tab:CreateDropdown (Overhauled, Layer-Fixed & Dynamic)
         ------------------------------------------------------------------
+        ------------------------------------------------------------------
+        -- Tab:CreateDropdown (Overhauled, Layer-Fixed & Dynamic)
+        ------------------------------------------------------------------
         function Tab:CreateDropdown(opts)
             opts = opts or {}
             local lbl      = opts.Label    or "Dropdown"
@@ -809,6 +812,7 @@ function Library:CreateWindow(opts)
             -- Animation Helpers
             local function Close()
                 open = false
+                ef.ZIndex = 5 -- FIX: Revert the row's ZIndex back to normal
                 tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
                 -- Wait for tween to finish before hiding to prevent visual snapping
                 task.delay(0.16, function() 
@@ -818,82 +822,71 @@ function Library:CreateWindow(opts)
 
             local function Open()
                 open = true
+                ef.ZIndex = 50 -- FIX: Blast the row's ZIndex to 50 so it renders over everything else
                 listFrame.Visible = true
-                local listH = math.min(#choices, maxDisplayed) * itemHeight
-                tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
+                
+                local count = #choices
+                local visibleCount = math.min(count, maxDisplayed)
+                local targetHeight = visibleCount * itemHeight
+                
+                itemContainer.CanvasSize = UDim2.new(0, 0, 0, count * itemHeight)
+                tw(listFrame, {Size = UDim2.new(1, 0, 0, targetHeight)})
             end
 
             dropBtn.MouseButton1Click:Connect(function()
                 if open then Close() else Open() end
             end)
 
-            -- Public API for this specific Dropdown
-            local Dropdown = {}
-
-            function Dropdown:Refresh(newOptions)
-                choices = newOptions or {}
-                
-                -- Clear old buttons
+            -- Choice Generator
+            local function BuildChoices()
+                -- Clear existing
                 for _, child in ipairs(itemContainer:GetChildren()) do
-                    if child:IsA("TextButton") then
-                        child:Destroy()
-                    end
+                    if child:IsA("TextButton") then child:Destroy() end
                 end
 
-                -- Recalculate canvas size based on new item count
-                itemContainer.CanvasSize = UDim2.new(0, 0, 0, #choices * itemHeight)
-
-                -- Populate new options
                 for i, choice in ipairs(choices) do
-                    local item = Instance.new("TextButton")
-                    item.BackgroundColor3 = Theme.TitleBar
-                    item.Size             = UDim2.new(1, 0, 0, itemHeight)
-                    item.Text             = ("  %s"):format(tostring(choice))
-                    item.TextXAlignment   = Enum.TextXAlignment.Left
-                    item.Font             = Theme.FontMono
-                    item.TextSize         = Theme.TextSizeSmall
-                    item.TextColor3       = Theme.TextSecondary
-                    item.BorderSizePixel  = 0
-                    item.AutoButtonColor  = false
-                    item.ZIndex           = 24
-                    item.Parent           = itemContainer
+                    local cBtn = Instance.new("TextButton")
+                    cBtn.BackgroundColor3 = Theme.TitleBar
+                    cBtn.Size             = UDim2.new(1, 0, 0, itemHeight)
+                    cBtn.Text             = "  " .. tostring(choice)
+                    cBtn.Font             = Theme.FontMono
+                    cBtn.TextSize         = Theme.TextSizeSmall
+                    cBtn.TextColor3       = Theme.TextSecondary
+                    cBtn.TextXAlignment   = Enum.TextXAlignment.Left
+                    cBtn.BorderSizePixel  = 0
+                    cBtn.AutoButtonColor  = false
+                    cBtn.LayoutOrder      = i
+                    cBtn.ZIndex           = 24
+                    cBtn.Parent           = itemContainer
 
-                    -- Hover Animations
-                    item.MouseEnter:Connect(function()
-                        tw(item, {BackgroundColor3 = Theme.SurfaceAlt, TextColor3 = Theme.Accent})
+                    cBtn.MouseEnter:Connect(function()
+                        tw(cBtn, {BackgroundColor3 = Theme.Surface, TextColor3 = Theme.TextPrimary})
                     end)
-                    item.MouseLeave:Connect(function()
-                        tw(item, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
+                    cBtn.MouseLeave:Connect(function()
+                        tw(cBtn, {BackgroundColor3 = Theme.TitleBar, TextColor3 = Theme.TextSecondary})
                     end)
-
-                    -- Selection Logic
-                    item.MouseButton1Click:Connect(function()
+                    cBtn.MouseButton1Click:Connect(function()
                         selected = choice
-                        dropBtn.Text = ("  %s  ▾"):format(selected)
-                        Close()
+                        dropBtn.Text = ("  %s  ▾"):format(tostring(selected))
                         pcall(cb, selected)
+                        Close()
                     end)
                 end
-                
-                -- If it's currently open, dynamically adjust the height of the frame
-                if open then
-                    local listH = math.min(#choices, maxDisplayed) * itemHeight
-                    tw(listFrame, {Size = UDim2.new(1, 0, 0, listH)})
-                end
             end
 
-            function Dropdown:Get()
-                return selected
-            end
+            BuildChoices()
 
+            local Dropdown = {}
             function Dropdown:Set(val)
                 selected = val
-                dropBtn.Text = ("  %s  ▾"):format(selected)
+                dropBtn.Text = ("  %s  ▾"):format(tostring(selected))
                 pcall(cb, selected)
             end
+            function Dropdown:Refresh(newChoices)
+                choices = newChoices or {}
+                BuildChoices()
+            end
 
-            -- Initialize the dropdown with the default provided options
-            Dropdown:Refresh(choices)
             return Dropdown
         end
         ------------------------------------------------------------------
