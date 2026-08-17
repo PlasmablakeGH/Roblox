@@ -14,17 +14,41 @@
 
     PlasmaLibUI  –  Modular Roblox Luau UI Library
     Theme        :  Hacker / Sci-Fi  (green-on-black)
-    Version      :  1.1.0  (tab switching fixed)
+    Version      :  1.2.0  (stability + UX pass)
+
+    CHANGES IN 1.2.0:
+        - Fixed a crash-on-launch bug: NewLabel assigned RichText to an
+          undefined global ("falseSYS") instead of `false`, which threw
+          on every label the library created.
+        - All UserInputService connections (drag, sliders, keybind,
+          dropdown outside-click) are tracked per window and disconnected
+          on close, so closing/reopening the menu no longer leaks input
+          listeners.
+        - Dragging now clamps the window so it can't be thrown off-screen.
+        - Dropdowns close when you click elsewhere, and opening one
+          auto-closes any other open dropdown in the same window.
+        - Tab bar now sizes buttons to their text and scrolls horizontally,
+          so windows with many tabs no longer overflow.
+        - Added a minimize button next to close.
+        - Optional `ToggleKey` (Enum.KeyCode) to show/hide the whole window.
+        - Scanline overlay is cheaper (scales with window height) and can
+          be disabled per-window with `Scanlines = false`.
+        - Window:Destroy() for programmatic cleanup.
 
     USAGE:
         local Library = loadstring(game:HttpGet(RAW_URL, true))()
-        local Window  = Library:CreateWindow({ Title = "My Tool", IconId = "rbxassetid://7072706620" })
+        local Window  = Library:CreateWindow({
+            Title     = "My Tool",
+            IconId    = "rbxassetid://7072706620",
+            ToggleKey = Enum.KeyCode.RightControl, -- optional
+            Scanlines = true,                      -- optional, default true
+        })
         local Tab     = Window:CreateTab("Main")
         Tab:CreateButton({ Label = "Click", Callback = function() print("!") end })
-        Tab:CreateToggle({ Label = "ESP",   Default = false, Callback = function(v) print(v) end })
+        Tab:CreateToggle({ Label = "Feature", Default = false, Callback = function(v) print(v) end })
         Tab:CreateSlider({ Label = "Speed", Min = 16, Max = 250, Default = 16, Callback = function(v) print(v) end })
         Tab:CreateDropdown({ Label = "Team", Options = {"Red","Blue"}, Callback = function(v) print(v) end })
-        Tab:CreateLabel("PlasmaLibUI v1.1")
+        Tab:CreateLabel("PlasmaLibUI v1.2")
 --]]
 
 ------------------------------------------------------------------------
@@ -33,6 +57,7 @@
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
+local TextService       = game:GetService("TextService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -107,7 +132,9 @@ local function NewLabel(p)
     l.Size         = p.Size     or UDim2.new(1,0,1,0)
     l.Position     = p.Pos      or UDim2.new(0,0,0,0)
     l.ZIndex       = p.Z        or 5
-    l.RichText     = p.Rich     or falseSYS
+    l.RichText     = p.Rich     or false  -- FIXED: was `p.Rich or falseSYS`, an undefined
+                                           -- global that resolved to nil and threw on
+                                           -- every single label the library created.
     l.Parent       = p.Parent
     return l
 end
@@ -126,7 +153,10 @@ local function NewFrame(p)
     return f
 end
 
-local function AddScanlines(parent)
+-- Scanline count now scales with window height instead of a flat 80
+-- instances regardless of window size, and can be skipped entirely.
+local function AddScanlines(parent, count)
+    count = count or 60
     local over = Instance.new("Frame")
     over.BackgroundTransparency = 1
     over.Size          = UDim2.new(1,0,1,0)
@@ -138,7 +168,7 @@ local function AddScanlines(parent)
     grid.CellSize    = UDim2.new(1,0,0,2)
     grid.CellPadding = UDim2.new(0,0,0,2)
     grid.Parent      = over
-    for _ = 1, 80 do
+    for _ = 1, count do
         local ln = Instance.new("Frame")
         ln.BackgroundColor3       = Theme.Scanline
         ln.BackgroundTransparency = 0.965
@@ -158,11 +188,28 @@ local function GuiParent()
 end
 
 ------------------------------------------------------------------------
--- Drag  (pure UIS, zero RunService)
+-- Drag  (pure UIS, zero RunService, clamped to the viewport, connections
+-- handed back to the caller so they can be torn down with the window)
 ------------------------------------------------------------------------
-local function MakeDraggable(handle, target)
+local function MakeDraggable(handle, target, track)
     local active, origin, startPos = false, Vector2.zero, UDim2.new()
-    handle.InputBegan:Connect(function(inp)
+
+    local function clampPos(newPos)
+        local camera = workspace.CurrentCamera
+        local vp = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+        local size = target.AbsoluteSize
+        local minVisible = 44 -- keep at least this many px reachable on screen
+        local scaleX, scaleY = newPos.X.Scale, newPos.Y.Scale
+        local minOffX = minVisible - size.X - vp.X * scaleX
+        local maxOffX = vp.X - minVisible - vp.X * scaleX
+        local minOffY = 0 - vp.Y * scaleY
+        local maxOffY = vp.Y - minVisible - vp.Y * scaleY
+        local x = math.clamp(newPos.X.Offset, minOffX, maxOffX)
+        local y = math.clamp(newPos.Y.Offset, minOffY, maxOffY)
+        return UDim2.new(scaleX, x, scaleY, y)
+    end
+
+    local c1 = handle.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
             active   = true
@@ -175,16 +222,19 @@ local function MakeDraggable(handle, target)
             end)
         end
     end)
-    UserInputService.InputChanged:Connect(function(inp)
+    local c2 = UserInputService.InputChanged:Connect(function(inp)
         if not active then return end
         if inp.UserInputType ~= Enum.UserInputType.MouseMovement
         and inp.UserInputType ~= Enum.UserInputType.Touch then return end
         local d = inp.Position - origin
-        target.Position = UDim2.new(
+        local newPos = UDim2.new(
             startPos.X.Scale, startPos.X.Offset + d.X,
             startPos.Y.Scale, startPos.Y.Offset + d.Y
         )
+        target.Position = clampPos(newPos)
     end)
+
+    if track then track(c1); track(c2) end
 end
 
 ------------------------------------------------------------------------
@@ -198,10 +248,12 @@ Library.__index = Library
 ------------------------------------------------------------------------
 function Library:CreateWindow(opts)
     opts = opts or {}
-    local TITLE  = opts.Title  or "PlasmaLibUI"
-    local ICON   = opts.IconId or "rbxassetid://7072706620"
-    local W      = opts.Width  or 500
-    local H      = opts.Height or 380
+    local TITLE     = opts.Title     or "PlasmaLibUI"
+    local ICON      = opts.IconId    or "rbxassetid://7072706620"
+    local W         = opts.Width     or 500
+    local H         = opts.Height    or 380
+    local SCANLINES = opts.Scanlines ~= false
+    local TOGGLEKEY = opts.ToggleKey
 
     -- ── ScreenGui ────────────────────────────────────────────────────
     local sg = Instance.new("ScreenGui")
@@ -223,10 +275,24 @@ function Library:CreateWindow(opts)
         Parent = sg,
     })
     Decorate(win, UDim.new(0,0), Theme.Border, 1)
-    AddScanlines(win)
+    if SCANLINES then
+        AddScanlines(win, math.clamp(math.floor(H / 4), 20, 80))
+    end
 
     -- Top accent stripe
     NewFrame({ Color=Theme.Accent, Size=UDim2.new(1,0,0,2), Z=6, Parent=win })
+
+    ------------------------------------------------------------------
+    -- Connection tracking + Window table declared early so every
+    -- closure below (drag, buttons, keybind) can safely reference them.
+    ------------------------------------------------------------------
+    local connections = {}
+    local function track(c)
+        table.insert(connections, c)
+        return c
+    end
+
+    local Window = {}
 
     -- ── Title bar ────────────────────────────────────────────────────
     local titleBar = NewFrame({
@@ -244,7 +310,7 @@ function Library:CreateWindow(opts)
     iconImg.Size      = UDim2.new(0,22,0,22)
     iconImg.Position  = UDim2.new(0,8,0.5,-11)
     iconImg.Image     = ICON
-    iconImg.ImageColor3 = Color3.fromRGB(0, 255, 100)
+    iconImg.ImageColor3 = Theme.Accent
     iconImg.ZIndex    = 7
     iconImg.Parent    = titleBar
 
@@ -254,13 +320,11 @@ function Library:CreateWindow(opts)
         Color  = Theme.Accent,
         Font   = Theme.FontMono,
         Size2  = Theme.TextSizeTitle,
-        Size   = UDim2.new(1,-100,1,0),
+        Size   = UDim2.new(1,-104,1,0),
         Pos    = UDim2.new(0,38,0,0),
         Z      = 7,
         Parent = titleBar,
     })
-
- 
 
     -- Close button
     local closeBtn = Instance.new("TextButton")
@@ -284,25 +348,52 @@ function Library:CreateWindow(opts)
     end)
     closeBtn.MouseButton1Click:Connect(function()
         tw(win,{Size=UDim2.new(0,W,0,0)}, Theme.TweenSlow)
-        task.delay(0.38, function() sg:Destroy() end)
+        task.delay(0.38, function() Window:Destroy() end)
     end)
 
-    MakeDraggable(titleBar, win)
+    -- Minimize button
+    local minimizeBtn = Instance.new("TextButton")
+    minimizeBtn.BackgroundColor3 = Theme.Surface
+    minimizeBtn.Size       = UDim2.new(0,28,0,20)
+    minimizeBtn.Position   = UDim2.new(1,-66,0.5,-10)
+    minimizeBtn.Text       = "_"
+    minimizeBtn.Font       = Theme.FontBold
+    minimizeBtn.TextSize   = 15
+    minimizeBtn.TextColor3 = Theme.Accent
+    minimizeBtn.BorderSizePixel = 0
+    minimizeBtn.AutoButtonColor = false
+    minimizeBtn.ZIndex = 8
+    minimizeBtn.Parent = titleBar
+    Decorate(minimizeBtn, UDim.new(0,3), Theme.Border, 1)
+    minimizeBtn.MouseEnter:Connect(function()
+        tw(minimizeBtn,{BackgroundColor3=Theme.SurfaceAlt})
+    end)
+    minimizeBtn.MouseLeave:Connect(function()
+        tw(minimizeBtn,{BackgroundColor3=Theme.Surface})
+    end)
+
+    MakeDraggable(titleBar, win, track)
 
     -- ── Tab button bar ───────────────────────────────────────────────
-    -- Sits directly below the title bar (y = 40)
-    local tabBar = NewFrame({
-        Name   = "TabBar",
-        Color  = Theme.TitleBar,
-        Size   = UDim2.new(1,0,0,30),
-        Pos    = UDim2.new(0,0,0,40),
-        Z      = 5,
-        Parent = win,
-    })
+    -- Sits directly below the title bar (y = 40). It's a horizontally
+    -- scrolling frame so windows with many tabs don't overflow.
+    local tabBar = Instance.new("ScrollingFrame")
+    tabBar.Name                 = "TabBar"
+    tabBar.BackgroundColor3     = Theme.TitleBar
+    tabBar.BorderSizePixel      = 0
+    tabBar.Size                 = UDim2.new(1,0,0,30)
+    tabBar.Position             = UDim2.new(0,0,0,40)
+    tabBar.ZIndex               = 5
+    tabBar.ScrollingDirection   = Enum.ScrollingDirection.X
+    tabBar.ScrollBarThickness   = 2
+    tabBar.ScrollBarImageColor3 = Theme.AccentDim
+    tabBar.CanvasSize           = UDim2.new(0,0,0,0)
+    tabBar.AutomaticCanvasSize  = Enum.AutomaticSize.X
+    tabBar.Parent               = win
+
     -- Horizontal list layout for tab buttons
     local tabBarList = Instance.new("UIListLayout")
     tabBarList.FillDirection = Enum.FillDirection.Horizontal
-    tabBarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
     tabBarList.SortOrder     = Enum.SortOrder.LayoutOrder
     tabBarList.Padding       = UDim.new(0, 2)
     tabBarList.Parent        = tabBar
@@ -311,8 +402,6 @@ function Library:CreateWindow(opts)
     local tabBarPad = Instance.new("UIPadding")
     tabBarPad.PaddingLeft = UDim.new(0, 4)
     tabBarPad.Parent      = tabBar
-
- 
 
     -- ── Content area ─────────────────────────────────────────────────
     -- Starts at y=71  (titleBar 38 + accent 2 + tabBar 30 + divider 1)
@@ -347,11 +436,37 @@ function Library:CreateWindow(opts)
     })
 
     ------------------------------------------------------------------
+    -- Minimize behaviour (needs contentArea/tabBar/statusBar to exist)
+    ------------------------------------------------------------------
+    local minimized = false
+    minimizeBtn.MouseButton1Click:Connect(function()
+        minimized = not minimized
+        if minimized then
+            tabBar.Visible       = false
+            contentArea.Visible  = false
+            statusBar.Visible    = false
+            tw(win, {Size = UDim2.new(0,W,0,40)}, Theme.TweenSlow)
+        else
+            tw(win, {Size = UDim2.new(0,W,0,H)}, Theme.TweenSlow)
+            task.delay(0.32, function()
+                if minimized then return end -- toggled again mid-animation
+                tabBar.Visible      = true
+                contentArea.Visible = true
+                statusBar.Visible   = true
+            end)
+        end
+    end)
+
+    ------------------------------------------------------------------
     -- Tab registry  (shared across all tabs in this window)
     -- Each entry: { btn = TextButton, page = ScrollingFrame }
     ------------------------------------------------------------------
     local tabs       = {}   -- array, filled as CreateTab is called
     local activeIdx  = 0    -- which tab is currently shown
+
+    -- Shared across every dropdown created on any tab of this window,
+    -- so opening one automatically closes whichever other one was open.
+    local activeDropdownCloser = nil
 
     -- This function always walks the live `tabs` array — no stale captures
     local function SetActiveTab(idx)
@@ -379,10 +494,27 @@ function Library:CreateWindow(opts)
     ------------------------------------------------------------------
     -- Window public API
     ------------------------------------------------------------------
-    local Window = {}
-
     function Window:SetIcon(id)
         iconImg.Image = id
+    end
+
+    -- Disconnects every input connection this window created (drag,
+    -- sliders, keybind, dropdown outside-click) and removes the GUI.
+    function Window:Destroy()
+        for _, c in ipairs(connections) do
+            pcall(function() c:Disconnect() end)
+        end
+        table.clear(connections)
+        sg:Destroy()
+    end
+
+    if TOGGLEKEY then
+        track(UserInputService.InputBegan:Connect(function(inp, processed)
+            if processed then return end
+            if inp.KeyCode == TOGGLEKEY then
+                win.Visible = not win.Visible
+            end
+        end))
     end
 
     ----------------------------------------------------------------
@@ -392,10 +524,15 @@ function Library:CreateWindow(opts)
         name = tostring(name or "Tab")
 
         ---- Tab button ------------------------------------------------
+        local textSize = TextService:GetTextSize(
+            name:upper(), Theme.TextSizeSmall, Theme.FontMono, Vector2.new(1000, 20)
+        )
+        local btnWidth = math.clamp(textSize.X + 24, 64, 160)
+
         local btn = Instance.new("TextButton")
         btn.Name             = "TabBtn_" .. name
         btn.BackgroundColor3 = Theme.TabInactive
-        btn.Size             = UDim2.new(0, 86, 1, -6)       -- width fixed, height fills bar minus padding
+        btn.Size             = UDim2.new(0, btnWidth, 1, -6)   -- sized to its label
         btn.Text             = name:upper()
         btn.Font             = Theme.FontMono
         btn.TextSize         = Theme.TextSizeSmall
@@ -578,21 +715,21 @@ function Library:CreateWindow(opts)
                 Parent = ef,
             })
 
-            local track = NewFrame({
+            local track2 = NewFrame({
                 Color  = state and Theme.ToggleOn or Theme.ToggleOff,
                 Size   = UDim2.new(0,44,0,22),
                 Pos    = UDim2.new(1,-44,0.5,-11),
                 Z      = 7,
                 Parent = ef,
             })
-            Decorate(track, UDim.new(0,11), Theme.Border, 1)
+            Decorate(track2, UDim.new(0,11), Theme.Border, 1)
 
             local knob = NewFrame({
                 Color  = Theme.ToggleKnob,
                 Size   = UDim2.new(0,16,0,16),
                 Pos    = state and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8),
                 Z      = 8,
-                Parent = track,
+                Parent = track2,
             })
             Decorate(knob, UDim.new(0,8), false)
 
@@ -606,7 +743,7 @@ function Library:CreateWindow(opts)
             local Toggle = {}
             function Toggle:Set(v)
                 state = v
-                tw(track, {BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff})
+                tw(track2, {BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff})
                 tw(knob,  {Position = state
                     and UDim2.new(1,-19,0.5,-8)
                     or  UDim2.new(0,3,0.5,-8)})
@@ -660,20 +797,20 @@ function Library:CreateWindow(opts)
 
             -- bottom row: track
             local botRow = NewFrame({Trans=1, Size=UDim2.new(1,0,0,20), Pos=UDim2.new(0,0,0,26), Z=6, Parent=ef})
-            local track  = NewFrame({
+            local strack = NewFrame({
                 Color  = Theme.SliderTrack,
                 Size   = UDim2.new(1,0,0,8),
                 Pos    = UDim2.new(0,0,0.5,-4),
                 Z      = 7,
                 Parent = botRow,
             })
-            Decorate(track, UDim.new(0,4), Theme.BorderDim, 1)
+            Decorate(strack, UDim.new(0,4), Theme.BorderDim, 1)
 
             local fill = NewFrame({
                 Color  = Theme.SliderFill,
                 Size   = UDim2.new((val-min)/(max-min), 0, 1, 0),
                 Z      = 8,
-                Parent = track,
+                Parent = strack,
             })
             Decorate(fill, UDim.new(0,4), false)
 
@@ -682,14 +819,14 @@ function Library:CreateWindow(opts)
                 Size   = UDim2.new(0,14,0,14),
                 Pos    = UDim2.new((val-min)/(max-min),-7,0.5,-7),
                 Z      = 9,
-                Parent = track,
+                Parent = strack,
             })
             Decorate(knob, UDim.new(0,7), Theme.Background, 1)
 
             local dragging = false
 
             local function Recalc(absX)
-                local pct    = math.clamp((absX - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                local pct    = math.clamp((absX - strack.AbsolutePosition.X) / strack.AbsoluteSize.X, 0, 1)
                 local raw    = min + (max - min) * pct
                 val          = math.clamp(math.floor((raw - min) / step + 0.5) * step + min, min, max)
                 local newPct = (val - min) / (max - min)
@@ -699,26 +836,26 @@ function Library:CreateWindow(opts)
                 pcall(cb, val)
             end
 
-            track.InputBegan:Connect(function(inp)
+            track(strack.InputBegan:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1
                 or inp.UserInputType == Enum.UserInputType.Touch then
                     dragging = true
                     Recalc(inp.Position.X)
                 end
-            end)
-            UserInputService.InputChanged:Connect(function(inp)
+            end))
+            track(UserInputService.InputChanged:Connect(function(inp)
                 if not dragging then return end
                 if inp.UserInputType == Enum.UserInputType.MouseMovement
                 or inp.UserInputType == Enum.UserInputType.Touch then
                     Recalc(inp.Position.X)
                 end
-            end)
-            UserInputService.InputEnded:Connect(function(inp)
+            end))
+            track(UserInputService.InputEnded:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1
                 or inp.UserInputType == Enum.UserInputType.Touch then
                     dragging = false
                 end
-            end)
+            end))
 
             local Slider = {}
             function Slider:Set(v)
@@ -734,14 +871,10 @@ function Library:CreateWindow(opts)
             return Slider
         end
 
-------------------------------------------------------------------
-        -- Tab:CreateDropdown (Overhauled & Layer-Fixed)
         ------------------------------------------------------------------
-      ------------------------------------------------------------------
-        -- Tab:CreateDropdown (Overhauled, Layer-Fixed & Dynamic)
-        ------------------------------------------------------------------
-        ------------------------------------------------------------------
-        -- Tab:CreateDropdown (Overhauled, Layer-Fixed & Dynamic)
+        -- Tab:CreateDropdown
+        --   Closes when you click outside it, and opening one closes any
+        --   other dropdown already open in this window.
         ------------------------------------------------------------------
         function Tab:CreateDropdown(opts)
             opts = opts or {}
@@ -750,6 +883,7 @@ function Library:CreateWindow(opts)
             local cb       = opts.Callback or function() end
             local selected = opts.Default  or choices[1] or "None"
             local open     = false
+            local outsideConn = nil
 
             local ef = ElemFrame(38)
             ef.ClipsDescendants = false -- Keep false so selection box can overflow safely
@@ -810,27 +944,54 @@ function Library:CreateWindow(opts)
             ll.Parent    = itemContainer
 
             -- Animation Helpers
-            local function Close()
+            local Close, Open
+
+            Close = function()
+                if not open then return end
                 open = false
-                ef.ZIndex = 5 -- FIX: Revert the row's ZIndex back to normal
+                ef.ZIndex = 5
                 tw(listFrame, {Size = UDim2.new(1, 0, 0, 0)})
-                -- Wait for tween to finish before hiding to prevent visual snapping
-                task.delay(0.16, function() 
-                    if not open then listFrame.Visible = false end 
+                task.delay(0.16, function()
+                    if not open then listFrame.Visible = false end
                 end)
+                if outsideConn then
+                    outsideConn:Disconnect()
+                    outsideConn = nil
+                end
+                if activeDropdownCloser == Close then
+                    activeDropdownCloser = nil
+                end
             end
 
-            local function Open()
+            Open = function()
+                if activeDropdownCloser and activeDropdownCloser ~= Close then
+                    activeDropdownCloser()
+                end
                 open = true
-                ef.ZIndex = 50 -- FIX: Blast the row's ZIndex to 50 so it renders over everything else
+                ef.ZIndex = 50
                 listFrame.Visible = true
-                
+
                 local count = #choices
                 local visibleCount = math.min(count, maxDisplayed)
                 local targetHeight = visibleCount * itemHeight
-                
+
                 itemContainer.CanvasSize = UDim2.new(0, 0, 0, count * itemHeight)
                 tw(listFrame, {Size = UDim2.new(1, 0, 0, targetHeight)})
+
+                outsideConn = track(UserInputService.InputBegan:Connect(function(inp)
+                    if inp.UserInputType == Enum.UserInputType.MouseButton1
+                    or inp.UserInputType == Enum.UserInputType.Touch then
+                        local pos = inp.Position
+                        local a, s   = listFrame.AbsolutePosition, listFrame.AbsoluteSize
+                        local ba, bs = dropBtn.AbsolutePosition, dropBtn.AbsoluteSize
+                        local insideList = pos.X >= a.X and pos.X <= a.X + s.X and pos.Y >= a.Y and pos.Y <= a.Y + s.Y
+                        local insideBtn  = pos.X >= ba.X and pos.X <= ba.X + bs.X and pos.Y >= ba.Y and pos.Y <= ba.Y + bs.Y
+                        if not insideList and not insideBtn then
+                            Close()
+                        end
+                    end
+                end))
+                activeDropdownCloser = Close
             end
 
             dropBtn.MouseButton1Click:Connect(function()
@@ -889,6 +1050,7 @@ function Library:CreateWindow(opts)
 
             return Dropdown
         end
+
         ------------------------------------------------------------------
         -- Tab:CreateTextInput
         ------------------------------------------------------------------
