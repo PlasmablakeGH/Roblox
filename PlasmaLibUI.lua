@@ -712,7 +712,7 @@ function Library:CreateWindow(options)
             Parent = screenGui,
         })
         playerMenu.Visible = false
-        decorate(playerMenu, UDim.new(0, 5), Theme.Border, 1)
+        decorate(playerMenu, UDim.new(0, 0), Theme.Border, 1)
 
         local menuAccent = newFrame({
             Name = "Accent",
