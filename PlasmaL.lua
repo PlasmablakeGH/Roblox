@@ -575,7 +575,9 @@ function Library:CreateWindow(options)
     track(close.MouseLeave:Connect(function()
         tween(close, {BackgroundColor3 = Color3.fromRGB(28, 8, 8), TextColor3 = Theme.Danger})
     end))
-
+    track(close.MouseButton1Click:Connect(function()
+        Window:Destroy()
+    end))
     makeDraggable(titleBar, root, track)
 
     ---------------------------------------------------------------------
